@@ -204,8 +204,8 @@ function initMap() {
   js.onload = function () {
     mapDiv.textContent = "";
     map = L.map("map").setView([52.0, 5.1], 13);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "&copy; OpenStreetMap"
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      attribution: "&copy; OpenStreetMap &copy; CARTO"
     }).addTo(map);
 
     // No tap handler needed — target is set from map center via confirm button
