@@ -1,9 +1,6 @@
-// ── CONFIG ────────────────────────────────────────────────────────────────────
-// Set this to the IP printed on the ESP32 serial monitor after boot
-var ESP32_IP = "192.168.1.100";
-// ─────────────────────────────────────────────────────────────────────────────
-
-var DATA_URL = "http://" + ESP32_IP + "/data";
+// The page is served by the ESP32 over HTTP, so window.location.hostname
+// is always the ESP32's IP. No hardcoded address needed.
+var DATA_URL = "http://" + window.location.hostname + "/data";
 
 var map    = null;
 var marker = null;
