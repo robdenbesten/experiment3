@@ -15,11 +15,14 @@ app.innerHTML = [
     card("",     "sats",        "Satellieten",          "-"),
     card("",     "dist",        "Afstand tot vorig",    "-"),
     card("",     "speed",       "Snelheid",             "-"),
-    card("full", "target-info", "Doel",                 "Lang indrukken op kaart om doel te zetten"),
+    card("full", "target-info", "Doel",                 "Pan kaart naar doel, druk op Bevestig"),
     card("",     "target-dist", "Afstand naar doel",    "-"),
     card("",     "target-bear", "Richting naar doel",   "-"),
-    '<div class="card full"><button id="clear-btn" onclick="clearTarget()">Doel wissen</button></div>',
-    '<div class="card full"><button id="place-btn" onclick="togglePlace()">Zet doel (tik dan op kaart)</button></div>',
+    '<div class="card full btn-row">',
+      '<button id="place-btn" onclick="togglePlace()">&#x271B; Zet doel</button>',
+      '<button id="confirm-btn" onclick="confirmTarget()" style="display:none;background:#a5d6a7">&#x2713; Bevestig</button>',
+      '<button id="clear-btn" onclick="clearTarget()">&#x2715; Wissen</button>',
+    '</div>',
   '</div>',
   '<div id="map"></div>'
 ].join("");
@@ -68,19 +71,37 @@ function bearingLabel(deg) {
 }
 
 var placingMode = false;
+var crosshair   = null;
 
 function togglePlace() {
   placingMode = !placingMode;
-  var btn = document.getElementById("place-btn");
+  var placeBtn   = document.getElementById("place-btn");
+  var confirmBtn = document.getElementById("confirm-btn");
   if (placingMode) {
-    btn.textContent = "Tik nu op de kaart...";
-    btn.style.background = "#a5d6a7";
-    document.getElementById("map").style.cursor = "crosshair";
+    placeBtn.textContent   = "Annuleer";
+    placeBtn.style.background = "#ef9a9a";
+    confirmBtn.style.display  = "";
+    // Show crosshair div over map center
+    if (!crosshair) {
+      crosshair = document.createElement("div");
+      crosshair.id = "crosshair";
+      crosshair.innerHTML = '<span>&#x271B;</span>';
+      document.getElementById("map").appendChild(crosshair);
+    }
+    crosshair.style.display = "flex";
   } else {
-    btn.textContent = "Zet doel (tik dan op kaart)";
-    btn.style.background = "";
-    document.getElementById("map").style.cursor = "";
+    placeBtn.textContent      = "\u271B Zet doel";
+    placeBtn.style.background = "";
+    confirmBtn.style.display  = "none";
+    if (crosshair) crosshair.style.display = "none";
   }
+}
+
+function confirmTarget() {
+  if (!map) return;
+  var c = map.getCenter();
+  setTarget(c.lat, c.lng);
+  togglePlace();
 }
 
 function setTarget(lat, lon) {
@@ -110,7 +131,7 @@ function clearTarget() {
   if (targetLine)   { map.removeLayer(targetLine);   targetLine   = null; }
   targetLat = null;
   targetLon = null;
-  document.getElementById("target-info").textContent  = "Lang indrukken op kaart om doel te zetten";
+  document.getElementById("target-info").textContent  = "Pan kaart naar doel, druk op Bevestig";
   document.getElementById("target-dist").textContent  = "-";
   document.getElementById("target-bear").textContent  = "-";
 }
@@ -147,17 +168,7 @@ function initMap() {
       attribution: "&copy; OpenStreetMap"
     }).addTo(map);
 
-    // Long-press (contextmenu) to set target — works reliably on mobile
-    map.on("contextmenu", function (e) {
-      setTarget(e.latlng.lat, e.latlng.lng);
-    });
-
-    // Tap to set target when placing mode is active
-    map.on("click", function (e) {
-      if (!placingMode) return;
-      setTarget(e.latlng.lat, e.latlng.lng);
-      togglePlace(); // exit placing mode
-    });
+    // No tap handler needed — target is set from map center via confirm button
   };
   js.onerror = function () {
     mapDiv.textContent = "Kaart niet beschikbaar (geen internet)";

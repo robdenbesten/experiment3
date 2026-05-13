@@ -49,16 +49,35 @@ h2 {
 .fix     { color: #a5d6a7; }
 .no-fix  { color: #ef9a9a; }
 
+.btn-row {
+  display: flex;
+  gap: 8px;
+  padding: 8px !important;
+}
+
 button {
-  width: 100%;
-  padding: 10px;
-  background: #ef9a9a;
+  flex: 1;
+  padding: 10px 6px;
+  background: #4fc3f7;
   color: #1a1a2e;
   border: none;
   border-radius: 6px;
-  font-size: 1em;
+  font-size: 0.95em;
   font-weight: bold;
   cursor: pointer;
+}
+
+#crosshair {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 1000;
+  font-size: 2.5em;
+  color: #ef9a9a;
+  text-shadow: 0 0 4px #000;
 }
 
 #map {
