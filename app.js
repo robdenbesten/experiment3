@@ -15,9 +15,10 @@ app.innerHTML = [
     card("",     "sats",        "Satellieten",          "-"),
     card("",     "dist",        "Afstand tot vorig",    "-"),
     card("",     "speed",       "Snelheid",             "-"),
-    card("full", "target-info", "Doel",                 "Klik op de kaart om een doel te zetten"),
+    card("full", "target-info", "Doel",                 "Lang indrukken op kaart om doel te zetten"),
     card("",     "target-dist", "Afstand naar doel",    "-"),
     card("",     "target-bear", "Richting naar doel",   "-"),
+    '<div class="card full"><button onclick="clearTarget()">Doel wissen</button></div>',
   '</div>',
   '<div id="map"></div>'
 ].join("");
@@ -65,7 +66,39 @@ function bearingLabel(deg) {
   return dirs[Math.round(deg / 22.5) % 16] + " (" + Math.round(deg) + "\u00b0)";
 }
 
-function updateNavigation() {
+function setTarget(lat, lon) {
+  targetLat = lat;
+  targetLon = lon;
+
+  var redIcon = L.icon({
+    iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png",
+    shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+    iconSize: [25, 41], iconAnchor: [12, 41]
+  });
+
+  if (targetMarker) {
+    targetMarker.setLatLng([targetLat, targetLon]);
+  } else {
+    targetMarker = L.marker([targetLat, targetLon], { icon: redIcon }).addTo(map);
+    targetLine   = L.polyline([], { color: "#ef9a9a", dashArray: "6,6" }).addTo(map);
+  }
+
+  document.getElementById("target-info").textContent =
+    lat.toFixed(6) + "\u00b0, " + lon.toFixed(6) + "\u00b0";
+  updateNavigation();
+}
+
+function clearTarget() {
+  if (targetMarker) { map.removeLayer(targetMarker); targetMarker = null; }
+  if (targetLine)   { map.removeLayer(targetLine);   targetLine   = null; }
+  targetLat = null;
+  targetLon = null;
+  document.getElementById("target-info").textContent  = "Lang indrukken op kaart om doel te zetten";
+  document.getElementById("target-dist").textContent  = "-";
+  document.getElementById("target-bear").textContent  = "-";
+}
+
+
   if (targetLat === null || currentLat === null) return;
   var d = haversineM(currentLat, currentLon, targetLat, targetLon);
   var b = bearing(currentLat, currentLon, targetLat, targetLon);
@@ -96,27 +129,9 @@ function initMap() {
       attribution: "&copy; OpenStreetMap"
     }).addTo(map);
 
-    // Click to set target
-    map.on("click", function (e) {
-      targetLat = e.latlng.lat;
-      targetLon = e.latlng.lng;
-
-      var redIcon = L.icon({
-        iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png",
-        shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-        iconSize: [25, 41], iconAnchor: [12, 41]
-      });
-
-      if (targetMarker) {
-        targetMarker.setLatLng([targetLat, targetLon]);
-      } else {
-        targetMarker = L.marker([targetLat, targetLon], { icon: redIcon }).addTo(map);
-        targetLine   = L.polyline([], { color: "#ef9a9a", dashArray: "6,6" }).addTo(map);
-      }
-
-      document.getElementById("target-info").textContent =
-        targetLat.toFixed(6) + "\u00b0, " + targetLon.toFixed(6) + "\u00b0";
-      updateNavigation();
+    // Long-press (contextmenu) to set target — works reliably on mobile
+    map.on("contextmenu", function (e) {
+      setTarget(e.latlng.lat, e.latlng.lng);
     });
   };
   js.onerror = function () {

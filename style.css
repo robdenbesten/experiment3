@@ -49,6 +49,18 @@ h2 {
 .fix     { color: #a5d6a7; }
 .no-fix  { color: #ef9a9a; }
 
+button {
+  width: 100%;
+  padding: 10px;
+  background: #ef9a9a;
+  color: #1a1a2e;
+  border: none;
+  border-radius: 6px;
+  font-size: 1em;
+  font-weight: bold;
+  cursor: pointer;
+}
+
 #map {
   height: 300px;
   border-radius: 8px;
