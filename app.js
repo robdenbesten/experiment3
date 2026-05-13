@@ -5,7 +5,7 @@ var DATA_URL = "http://" + window.location.hostname + "/data";
 // ── Build DOM ─────────────────────────────────────────────────────────────────
 var app = document.getElementById("app");
 app.innerHTML = [
-  '<h2>GPS Tracker V2</h2>',
+  '<h2>GPS Tracker V3</h2>',
   '<div class="grid">',
     card("full", "conn",        "Verbinding",           "Verbinden..."),
     card("full", "status",      "GPS Status",           "-"),
