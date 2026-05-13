@@ -83,7 +83,7 @@ function togglePlace() {
   }
 }
 
-
+function setTarget(lat, lon) {
   targetLat = lat;
   targetLon = lon;
 
@@ -116,6 +116,7 @@ function clearTarget() {
 }
 
 
+function updateNavigation() {
   if (targetLat === null || currentLat === null) return;
   var d = haversineM(currentLat, currentLon, targetLat, targetLon);
   var b = bearing(currentLat, currentLon, targetLat, targetLon);
