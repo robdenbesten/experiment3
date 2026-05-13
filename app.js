@@ -21,7 +21,6 @@ app.innerHTML = [
     '<div class="card full btn-row">',
       '<button id="place-btn" onclick="togglePlace()">&#x271B; Voeg toe</button>',
       '<button id="confirm-btn" onclick="confirmWaypoint()" style="display:none;background:#a5d6a7">&#x2713; Bevestig</button>',
-      '<button id="next-btn"  onclick="nextWaypoint()"  style="display:none;background:#fff176;color:#1a1a2e">&rarr; Volgende</button>',
       '<button id="clear-btn" onclick="clearWaypoints()">&#x2715; Wissen</button>',
     '</div>',
   '</div>',
@@ -151,16 +150,6 @@ function clearWaypoints() {
   document.getElementById("wp-info").textContent     = "Nog geen waypoints";
   document.getElementById("target-dist").textContent = "-";
   document.getElementById("target-bear").textContent = "-";
-  document.getElementById("next-btn").style.display  = "none";
-}
-
-function nextWaypoint() {
-  if (currentWPIndex < waypoints.length - 1) {
-    currentWPIndex++;
-    refreshMarkerIcons();
-    updateWPInfo();
-    updateNavigation();
-  }
 }
 
 function updateWPInfo() {
@@ -174,14 +163,20 @@ function updateWPInfo() {
   document.getElementById("wp-info").textContent =
     (currentWPIndex + 1) + " / " + n + " \u2014 " +
     wp.lat.toFixed(6) + "\u00b0, " + wp.lon.toFixed(6) + "\u00b0";
-  document.getElementById("next-btn").style.display =
-    (n > 1 && currentWPIndex < n - 1) ? "" : "none";
 }
 
 function updateNavigation() {
   if (waypoints.length === 0 || currentLat === null) return;
   var wp = waypoints[currentWPIndex];
   var d = haversineM(currentLat, currentLon, wp.lat, wp.lon);
+  // Auto-advance when within 10 m of current waypoint
+  if (d <= 10 && currentWPIndex < waypoints.length - 1) {
+    currentWPIndex++;
+    refreshMarkerIcons();
+    updateWPInfo();
+    wp = waypoints[currentWPIndex];
+    d  = haversineM(currentLat, currentLon, wp.lat, wp.lon);
+  }
   var b = bearing(currentLat, currentLon, wp.lat, wp.lon);
   document.getElementById("target-dist").textContent =
     d >= 1000 ? (d / 1000).toFixed(2) + " km" : d.toFixed(0) + " m";
