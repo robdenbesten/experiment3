@@ -18,7 +18,8 @@ app.innerHTML = [
     card("full", "target-info", "Doel",                 "Lang indrukken op kaart om doel te zetten"),
     card("",     "target-dist", "Afstand naar doel",    "-"),
     card("",     "target-bear", "Richting naar doel",   "-"),
-    '<div class="card full"><button onclick="clearTarget()">Doel wissen</button></div>',
+    '<div class="card full"><button id="clear-btn" onclick="clearTarget()">Doel wissen</button></div>',
+    '<div class="card full"><button id="place-btn" onclick="togglePlace()">Zet doel (tik dan op kaart)</button></div>',
   '</div>',
   '<div id="map"></div>'
 ].join("");
@@ -66,7 +67,23 @@ function bearingLabel(deg) {
   return dirs[Math.round(deg / 22.5) % 16] + " (" + Math.round(deg) + "\u00b0)";
 }
 
-function setTarget(lat, lon) {
+var placingMode = false;
+
+function togglePlace() {
+  placingMode = !placingMode;
+  var btn = document.getElementById("place-btn");
+  if (placingMode) {
+    btn.textContent = "Tik nu op de kaart...";
+    btn.style.background = "#a5d6a7";
+    document.getElementById("map").style.cursor = "crosshair";
+  } else {
+    btn.textContent = "Zet doel (tik dan op kaart)";
+    btn.style.background = "";
+    document.getElementById("map").style.cursor = "";
+  }
+}
+
+
   targetLat = lat;
   targetLon = lon;
 
@@ -132,6 +149,13 @@ function initMap() {
     // Long-press (contextmenu) to set target — works reliably on mobile
     map.on("contextmenu", function (e) {
       setTarget(e.latlng.lat, e.latlng.lng);
+    });
+
+    // Tap to set target when placing mode is active
+    map.on("click", function (e) {
+      if (!placingMode) return;
+      setTarget(e.latlng.lat, e.latlng.lng);
+      togglePlace(); // exit placing mode
     });
   };
   js.onerror = function () {
