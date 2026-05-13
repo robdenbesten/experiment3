@@ -7,21 +7,22 @@ var app = document.getElementById("app");
 app.innerHTML = [
   '<h2>GPS Tracker V4</h2>',
   '<div class="grid">',
-    card("full", "conn",        "Verbinding",           "Verbinden..."),
-    card("full", "status",      "GPS Status",           "-"),
-    card("",     "lat",         "Latitude",             "-"),
-    card("",     "lon",         "Longitude",            "-"),
-    card("",     "alt",         "Hoogte",               "-"),
-    card("",     "sats",        "Satellieten",          "-"),
-    card("",     "dist",        "Afstand tot vorig",    "-"),
-    card("",     "speed",       "Snelheid",             "-"),
-    card("full", "target-info", "Doel",                 "Pan kaart naar doel, druk op Bevestig"),
-    card("",     "target-dist", "Afstand naar doel",    "-"),
-    card("",     "target-bear", "Richting naar doel",   "-"),
+    card("full", "conn",        "Verbinding",              "Verbinden..."),
+    card("full", "status",      "GPS Status",              "-"),
+    card("",     "lat",         "Latitude",                "-"),
+    card("",     "lon",         "Longitude",               "-"),
+    card("",     "alt",         "Hoogte",                  "-"),
+    card("",     "sats",        "Satellieten",             "-"),
+    card("",     "dist",        "Afstand tot vorig",       "-"),
+    card("",     "speed",       "Snelheid",                "-"),
+    card("full", "wp-info",     "Waypoint",                "Nog geen waypoints"),
+    card("",     "target-dist", "Afstand naar waypoint",   "-"),
+    card("",     "target-bear", "Richting naar waypoint",  "-"),
     '<div class="card full btn-row">',
-      '<button id="place-btn" onclick="togglePlace()">&#x271B; Zet doel</button>',
-      '<button id="confirm-btn" onclick="confirmTarget()" style="display:none;background:#a5d6a7">&#x2713; Bevestig</button>',
-      '<button id="clear-btn" onclick="clearTarget()">&#x2715; Wissen</button>',
+      '<button id="place-btn" onclick="togglePlace()">&#x271B; Voeg toe</button>',
+      '<button id="confirm-btn" onclick="confirmWaypoint()" style="display:none;background:#a5d6a7">&#x2713; Bevestig</button>',
+      '<button id="next-btn"  onclick="nextWaypoint()"  style="display:none;background:#fff176;color:#1a1a2e">&rarr; Volgende</button>',
+      '<button id="clear-btn" onclick="clearWaypoints()">&#x2715; Wissen</button>',
     '</div>',
   '</div>',
   '<div id="map"></div>'
@@ -34,14 +35,15 @@ function card(extra, id, label, init) {
     '</div>';
 }
 
-var map          = null;
-var marker       = null;   // current position marker (blue)
-var targetMarker = null;   // goal marker (red)
-var targetLine   = null;   // line between position and goal
-var targetLat    = null;
-var targetLon    = null;
-var currentLat   = null;
-var currentLon   = null;
+var map            = null;
+var marker         = null;   // current position marker (blue)
+var waypoints      = [];     // [{lat, lon}, ...]
+var wpMarkers      = [];     // Leaflet markers per waypoint
+var routeLine      = null;   // polyline through all waypoints
+var navLine        = null;   // dashed line: position → current waypoint
+var currentWPIndex = 0;      // which waypoint we're navigating to
+var currentLat     = null;
+var currentLon     = null;
 
 // ── Navigation helpers ────────────────────────────────────────────────────────
 function toRad(deg) { return deg * Math.PI / 180; }
@@ -70,6 +72,23 @@ function bearingLabel(deg) {
   return dirs[Math.round(deg / 22.5) % 16] + " (" + Math.round(deg) + "\u00b0)";
 }
 
+// ── Waypoint icon (numbered circle) ──────────────────────────────────────────
+function wpIcon(n, active) {
+  var bg = active ? "#ef5350" : "#78909c";
+  var html = '<div style="background:' + bg + ';color:#fff;border-radius:50%;' +
+    'width:26px;height:26px;display:flex;align-items:center;justify-content:center;' +
+    'font-weight:bold;font-size:13px;border:2px solid #fff;' +
+    'box-shadow:0 1px 4px rgba(0,0,0,.6)">' + n + '</div>';
+  return L.divIcon({ className: '', html: html, iconSize: [26, 26], iconAnchor: [13, 13] });
+}
+
+function refreshMarkerIcons() {
+  for (var i = 0; i < wpMarkers.length; i++) {
+    wpMarkers[i].setIcon(wpIcon(i + 1, i === currentWPIndex));
+  }
+}
+
+// ── Placing mode ──────────────────────────────────────────────────────────────
 var placingMode = false;
 var crosshair   = null;
 
@@ -78,10 +97,9 @@ function togglePlace() {
   var placeBtn   = document.getElementById("place-btn");
   var confirmBtn = document.getElementById("confirm-btn");
   if (placingMode) {
-    placeBtn.textContent   = "Annuleer";
+    placeBtn.textContent      = "Annuleer";
     placeBtn.style.background = "#ef9a9a";
     confirmBtn.style.display  = "";
-    // Show crosshair div over map center
     if (!crosshair) {
       crosshair = document.createElement("div");
       crosshair.id = "crosshair";
@@ -90,62 +108,89 @@ function togglePlace() {
     }
     crosshair.style.display = "flex";
   } else {
-    placeBtn.textContent      = "\u271B Zet doel";
+    placeBtn.textContent      = "\u271B Voeg toe";
     placeBtn.style.background = "";
     confirmBtn.style.display  = "none";
     if (crosshair) crosshair.style.display = "none";
   }
 }
 
-function confirmTarget() {
+function confirmWaypoint() {
   if (!map) return;
   var c = map.getCenter();
-  setTarget(c.lat, c.lng);
+  addWaypoint(c.lat, c.lng);
   togglePlace();
 }
 
-function setTarget(lat, lon) {
-  targetLat = lat;
-  targetLon = lon;
+function addWaypoint(lat, lon) {
+  waypoints.push({ lat: lat, lon: lon });
+  var idx = waypoints.length - 1;
+  var m = L.marker([lat, lon], { icon: wpIcon(idx + 1, idx === currentWPIndex) }).addTo(map);
+  wpMarkers.push(m);
 
-  var redIcon = L.icon({
-    iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png",
-    shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-    iconSize: [25, 41], iconAnchor: [12, 41]
-  });
-
-  if (targetMarker) {
-    targetMarker.setLatLng([targetLat, targetLon]);
-  } else {
-    targetMarker = L.marker([targetLat, targetLon], { icon: redIcon }).addTo(map);
-    targetLine   = L.polyline([], { color: "#ef9a9a", dashArray: "6,6" }).addTo(map);
+  // Route line through all waypoints
+  if (routeLine) {
+    map.removeLayer(routeLine);
+  }
+  if (waypoints.length > 1) {
+    var latlngs = waypoints.map(function(wp) { return [wp.lat, wp.lon]; });
+    routeLine = L.polyline(latlngs, { color: "#78909c", weight: 2, dashArray: "4,4" }).addTo(map);
   }
 
-  document.getElementById("target-info").textContent =
-    lat.toFixed(6) + "\u00b0, " + lon.toFixed(6) + "\u00b0";
+  updateWPInfo();
   updateNavigation();
 }
 
-function clearTarget() {
-  if (targetMarker) { map.removeLayer(targetMarker); targetMarker = null; }
-  if (targetLine)   { map.removeLayer(targetLine);   targetLine   = null; }
-  targetLat = null;
-  targetLon = null;
-  document.getElementById("target-info").textContent  = "Pan kaart naar doel, druk op Bevestig";
-  document.getElementById("target-dist").textContent  = "-";
-  document.getElementById("target-bear").textContent  = "-";
+function clearWaypoints() {
+  for (var i = 0; i < wpMarkers.length; i++) { map.removeLayer(wpMarkers[i]); }
+  wpMarkers  = [];
+  waypoints  = [];
+  currentWPIndex = 0;
+  if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+  if (navLine)   { map.removeLayer(navLine);   navLine   = null; }
+  document.getElementById("wp-info").textContent     = "Nog geen waypoints";
+  document.getElementById("target-dist").textContent = "-";
+  document.getElementById("target-bear").textContent = "-";
+  document.getElementById("next-btn").style.display  = "none";
 }
 
+function nextWaypoint() {
+  if (currentWPIndex < waypoints.length - 1) {
+    currentWPIndex++;
+    refreshMarkerIcons();
+    updateWPInfo();
+    updateNavigation();
+  }
+}
+
+function updateWPInfo() {
+  var n = waypoints.length;
+  if (n === 0) {
+    document.getElementById("wp-info").textContent = "Nog geen waypoints";
+    document.getElementById("next-btn").style.display = "none";
+    return;
+  }
+  var wp = waypoints[currentWPIndex];
+  document.getElementById("wp-info").textContent =
+    (currentWPIndex + 1) + " / " + n + " \u2014 " +
+    wp.lat.toFixed(6) + "\u00b0, " + wp.lon.toFixed(6) + "\u00b0";
+  document.getElementById("next-btn").style.display =
+    (n > 1 && currentWPIndex < n - 1) ? "" : "none";
+}
 
 function updateNavigation() {
-  if (targetLat === null || currentLat === null) return;
-  var d = haversineM(currentLat, currentLon, targetLat, targetLon);
-  var b = bearing(currentLat, currentLon, targetLat, targetLon);
+  if (waypoints.length === 0 || currentLat === null) return;
+  var wp = waypoints[currentWPIndex];
+  var d = haversineM(currentLat, currentLon, wp.lat, wp.lon);
+  var b = bearing(currentLat, currentLon, wp.lat, wp.lon);
   document.getElementById("target-dist").textContent =
     d >= 1000 ? (d / 1000).toFixed(2) + " km" : d.toFixed(0) + " m";
   document.getElementById("target-bear").textContent = bearingLabel(b);
-  if (map && targetLine) {
-    targetLine.setLatLngs([[currentLat, currentLon], [targetLat, targetLon]]);
+  if (map) {
+    if (!navLine) {
+      navLine = L.polyline([], { color: "#ef5350", weight: 2, dashArray: "6,6" }).addTo(map);
+    }
+    navLine.setLatLngs([[currentLat, currentLon], [wp.lat, wp.lon]]);
   }
 }
 
