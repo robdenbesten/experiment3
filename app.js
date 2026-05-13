@@ -2,6 +2,30 @@
 // is always the ESP32's IP. No hardcoded address needed.
 var DATA_URL = "http://" + window.location.hostname + "/data";
 
+// ── Build DOM ─────────────────────────────────────────────────────────────────
+var app = document.getElementById("app");
+app.innerHTML = [
+  '<h2>GPS Tracker</h2>',
+  '<div class="grid">',
+    card("full", "conn",   "Verbinding",        "Verbinden..."),
+    card("full", "status", "GPS Status",         "-"),
+    card("",     "lat",    "Latitude",           "-"),
+    card("",     "lon",    "Longitude",          "-"),
+    card("",     "alt",    "Hoogte",             "-"),
+    card("",     "sats",   "Satellieten",        "-"),
+    card("",     "dist",   "Afstand tot vorig",  "-"),
+    card("",     "speed",  "Snelheid",           "-"),
+  '</div>',
+  '<div id="map"></div>'
+].join("");
+
+function card(extra, id, label, init) {
+  return '<div class="card ' + extra + '">' +
+    '<div class="label">' + label + '</div>' +
+    '<div class="value" id="' + id + '">' + init + '</div>' +
+    '</div>';
+}
+
 var map    = null;
 var marker = null;
 
