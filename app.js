@@ -14,10 +14,12 @@ app.innerHTML = [
     card("full", "wp-info",     "Waypoint",                "No waypoints yet"),
     card("",     "target-dist", "Distance to waypoint",    "-"),
     card("",     "target-bear", "Direction to waypoint",   "-"),
-    '<div class="card full btn-row">',
-      '<button id="place-btn" onclick="togglePlace()">&#x271B; Add</button>',
-      '<button id="confirm-btn" onclick="confirmWaypoint()" style="display:none">&#x2713; Confirm</button>',
-      '<button id="clear-btn" onclick="clearWaypoints()">&#x2715; Clear</button>',
+    '<div class="card full btn-row" id="action-row">',
+      '<div class="action-stack">',
+        '<button id="confirm-btn" onclick="confirmWaypoint()">&#x2713; Confirm</button>',
+        '<button id="place-btn" onclick="togglePlace()">&#x271B; Add</button>',
+      '</div>',
+      '<button id="clear-btn" onclick="clearWaypoints()" aria-label="Clear waypoints">&#x2715;</button>',
     '</div>',
   '</div>',
   '<div id="map"></div>'
@@ -90,12 +92,11 @@ var crosshair   = null;
 
 function togglePlace() {
   placingMode = !placingMode;
+  var actionRow  = document.getElementById("action-row");
   var placeBtn   = document.getElementById("place-btn");
-  var confirmBtn = document.getElementById("confirm-btn");
   if (placingMode) {
+    actionRow.classList.add("placing");
     placeBtn.textContent      = "Cancel";
-    placeBtn.style.color      = "#ffd700";
-    confirmBtn.style.display  = "";
     if (!crosshair) {
       crosshair = document.createElement("div");
       crosshair.id = "crosshair";
@@ -104,9 +105,8 @@ function togglePlace() {
     }
     crosshair.style.display = "flex";
   } else {
+    actionRow.classList.remove("placing");
     placeBtn.textContent      = "\u271B Add";
-    placeBtn.style.color      = "";
-    confirmBtn.style.display  = "none";
     if (crosshair) crosshair.style.display = "none";
   }
 }
@@ -138,6 +138,10 @@ function addWaypoint(lat, lon) {
 }
 
 function clearWaypoints() {
+  if (!window.confirm("Are you sure you want to clear all waypoints?")) {
+    return;
+  }
+
   for (var i = 0; i < wpMarkers.length; i++) { map.removeLayer(wpMarkers[i]); }
   wpMarkers  = [];
   waypoints  = [];

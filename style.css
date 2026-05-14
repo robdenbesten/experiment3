@@ -84,30 +84,72 @@ h2 {
 
 .btn-row {
   display: flex;
+  align-items: center;
   gap: 8px;
   padding: 10px !important;
+  border-radius: 9999px;
+}
+
+.action-stack {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 8px;
 }
 
 button {
   flex: 1;
-  padding: 10px 8px;
+  height: 44px;
+  padding: 0 8px;
   background: #444;
   color: #fff;
   border: none;
   border-radius: 9999px;
   font-size: 0.95em;
-  font-weight: bold;
+  font-weight: 500;
+  line-height: 1.2;
   cursor: pointer;
   transition: background 0.15s ease;
 }
 
-#place-btn,
-#confirm-btn {
-  font-weight: 400;
-}
-
 #confirm-btn {
   color: #ffd700;
+  flex: 0 1 0;
+  max-width: 0;
+  opacity: 0;
+  padding-left: 0;
+  padding-right: 0;
+  overflow: hidden;
+  transform: translateX(-6px);
+  pointer-events: none;
+  transition: max-width 0.28s ease, opacity 0.2s ease, padding 0.28s ease, transform 0.28s ease, background 0.15s ease;
+}
+
+#action-row.placing #place-btn {
+  color: #fff;
+  flex: 1 1 0;
+}
+
+#action-row.placing #confirm-btn {
+  flex: 1 1 0;
+  max-width: none;
+  min-width: 0;
+  opacity: 1;
+  padding-left: 8px;
+  padding-right: 8px;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+#clear-btn {
+  flex: 0 0 44px;
+  width: 44px;
+  border-radius: 50%;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.05em;
 }
 
 button:hover {
