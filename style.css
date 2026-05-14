@@ -61,7 +61,7 @@ h2 {
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #b89200, #ffd700);
+  background: #ffd700;
   transition: width 0.3s ease;
 }
 
@@ -77,10 +77,10 @@ h2 {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
 }
 
-.ok      { color: #7fd28b; }
-.err     { color: #ef9a9a; }
-.fix     { color: #7fd28b; }
-.no-fix  { color: #ef9a9a; }
+.ok      { color: #39ff14; }
+.err     { color: #ff3b30; }
+.fix     { color: #39ff14; }
+.no-fix  { color: #ff3b30; }
 
 .btn-row {
   display: flex;
