@@ -2,10 +2,15 @@
 #include <TinyGPSPlus.h>
 #include <WiFi.h>
 #include <WebServer.h>
-#include <ESPmDNS.h>
 
 const char* WIFI_SSID     = "Gringo Burru";
 const char* WIFI_PASSWORD = "Campina1";
+
+// Fixed IP for phone hotspot use. Adjust these if your hotspot uses
+// another range.
+IPAddress FIXED_IP(10, 200, 126, 66);
+IPAddress FIXED_GATEWAY(10, 200, 126, 1);
+IPAddress FIXED_SUBNET(255, 255, 255, 0);
 
 static const int RX_PIN = 44;
 static const int TX_PIN = 43;
@@ -114,6 +119,10 @@ void setup() {
   WiFi.mode(WIFI_STA);
   delay(100);               // let radio settle after mode switch
 
+  if (!WiFi.config(FIXED_IP, FIXED_GATEWAY, FIXED_SUBNET)) {
+    Serial.println("Waarschuwing: vaste IP-configuratie mislukt.");
+  }
+
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Verbinden");
   while (WiFi.status() != WL_CONNECTED) {
@@ -122,14 +131,8 @@ void setup() {
   }
   Serial.print("\nIP: ");
   Serial.println(WiFi.localIP());
-
-  // ── Start mDNS ────────────────────────────────────────────────────────
-  if (!MDNS.begin("esp32")) {
-    Serial.println("Error setting up mDNS");
-  } else {
-    MDNS.addService("http", "tcp", 80);
-    Serial.println("mDNS started: http://esp32.local");
-  }
+  Serial.print("Open op telefoon: http://");
+  Serial.println(WiFi.localIP());
 
   server.on("/",     HTTP_GET,     handleRoot);
   server.on("/data", HTTP_GET,     handleData);

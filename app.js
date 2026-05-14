@@ -7,13 +7,9 @@ var app = document.getElementById("app");
 app.innerHTML = [
   '<h2>GPS Tracker V4</h2>',
   '<div class="grid">',
-    card("full", "conn",        "Verbinding",              "Verbinden..."),
-    card("full", "status",      "GPS Status",              "-"),
-    card("",     "lat",         "Latitude",                "-"),
-    card("",     "lon",         "Longitude",               "-"),
-    card("",     "alt",         "Hoogte",                  "-"),
+    card("",     "conn",        "Verbinding",              "Verbinden..."),
+    card("",     "status",      "GPS Status",              "-"),
     card("",     "sats",        "Satellieten",             "-"),
-    card("",     "dist",        "Afstand tot vorig",       "-"),
     card("",     "speed",       "Snelheid",                "-"),
     card("full", "wp-info",     "Waypoint",                "Nog geen waypoints"),
     card("",     "target-dist", "Afstand naar waypoint",   "-"),
@@ -234,9 +230,6 @@ function update() {
         st.className   = "value fix";
         currentLat = d.lat;
         currentLon = d.lon;
-        document.getElementById("lat").textContent  = d.lat.toFixed(6) + "\u00b0";
-        document.getElementById("lon").textContent  = d.lon.toFixed(6) + "\u00b0";
-        document.getElementById("dist").textContent = d.dist.toFixed(2) + " m";
         if (map) {
           if (marker) {
             marker.setLatLng([d.lat, d.lon]);
@@ -251,7 +244,6 @@ function update() {
         st.className   = "value no-fix";
       }
 
-      document.getElementById("alt").textContent   = d.alt_valid  ? d.alt.toFixed(1)  + " m"    : "-";
       document.getElementById("sats").textContent  = d.sats_valid ? d.sats + " sats"             : "0 sats";
       document.getElementById("speed").textContent = d.spd_valid  ? d.spd.toFixed(1)  + " km/h" : "-";
     })
