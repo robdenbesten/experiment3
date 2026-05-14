@@ -41,6 +41,7 @@ const char ROOT_HTML[] PROGMEM = R"rawliteral(
   <script>
   (function () {
     var BASE = 'https://robdenbesten.github.io/experiment3/';
+    var bust = Date.now();
 
     function injectCSS(css) {
       var el = document.createElement('style');
@@ -53,20 +54,14 @@ const char ROOT_HTML[] PROGMEM = R"rawliteral(
       document.head.appendChild(el);
     }
 
-    // Run from cache immediately (instant load)
-    var cachedCSS = localStorage.getItem('gps_css');
-    var cachedJS  = localStorage.getItem('gps_js');
-    if (cachedCSS) injectCSS(cachedCSS);
-    if (cachedJS)  injectJS(cachedJS);
-
-    // Fetch updates in background — silent if no internet
-    fetch(BASE + 'style.css?' + Date.now())
+    // Always fetch latest files; no localStorage cache to avoid stale app code.
+    fetch(BASE + 'style.css?v=' + bust)
       .then(function (r) { return r.text(); })
-      .then(function (t) { localStorage.setItem('gps_css', t); if (!cachedCSS) injectCSS(t); })
+      .then(function (t) { injectCSS(t); })
       .catch(function () {});
-    fetch(BASE + 'app.js?' + Date.now())
+    fetch(BASE + 'app.js?v=' + bust)
       .then(function (r) { return r.text(); })
-      .then(function (t) { localStorage.setItem('gps_js', t);  if (!cachedJS)  injectJS(t);  })
+      .then(function (t) { injectJS(t); })
       .catch(function () {});
   })();
   </script>

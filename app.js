@@ -257,4 +257,8 @@ function update() {
 // Start immediately, then every second
 update();
 setInterval(update, 1000);
-window.addEventListener("load", initMap);
+if (document.readyState === "complete") {
+  initMap();
+} else {
+  window.addEventListener("load", initMap);
+}
