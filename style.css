@@ -141,14 +141,6 @@ button:hover {
     padding: 14px;
   }
 
-  .grid {
-    grid-template-columns: 1fr;
-  }
-
-  .card.full {
-    grid-column: auto;
-  }
-
   #map {
     height: 280px;
   }
