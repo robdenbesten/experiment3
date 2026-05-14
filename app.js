@@ -7,17 +7,17 @@ var app = document.getElementById("app");
 app.innerHTML = [
   '<h2>GPS Tracker V4</h2>',
   '<div class="grid">',
-    card("",     "conn",        "Verbinding",              "Verbinden..."),
+    card("",     "conn",        "Connection",              "Connecting..."),
     card("",     "status",      "GPS Status",              "-"),
-    card("",     "sats",        "Satellieten",             "-"),
-    card("",     "speed",       "Snelheid",                "-"),
-    card("full", "wp-info",     "Waypoint",                "Nog geen waypoints"),
-    card("",     "target-dist", "Afstand naar waypoint",   "-"),
-    card("",     "target-bear", "Richting naar waypoint",  "-"),
+    card("",     "sats",        "Satellites",              "-"),
+    card("",     "speed",       "Speed",                   "-"),
+    card("full", "wp-info",     "Waypoint",                "No waypoints yet"),
+    card("",     "target-dist", "Distance to waypoint",    "-"),
+    card("",     "target-bear", "Direction to waypoint",   "-"),
     '<div class="card full btn-row">',
-      '<button id="place-btn" onclick="togglePlace()">&#x271B; Voeg toe</button>',
-      '<button id="confirm-btn" onclick="confirmWaypoint()" style="display:none;background:#a5d6a7">&#x2713; Bevestig</button>',
-      '<button id="clear-btn" onclick="clearWaypoints()">&#x2715; Wissen</button>',
+      '<button id="place-btn" onclick="togglePlace()">&#x271B; Add</button>',
+      '<button id="confirm-btn" onclick="confirmWaypoint()" style="display:none;background:#a5d6a7">&#x2713; Confirm</button>',
+      '<button id="clear-btn" onclick="clearWaypoints()">&#x2715; Clear</button>',
     '</div>',
   '</div>',
   '<div id="map"></div>'
@@ -92,7 +92,7 @@ function togglePlace() {
   var placeBtn   = document.getElementById("place-btn");
   var confirmBtn = document.getElementById("confirm-btn");
   if (placingMode) {
-    placeBtn.textContent      = "Annuleer";
+    placeBtn.textContent      = "Cancel";
     placeBtn.style.background = "#ef9a9a";
     confirmBtn.style.display  = "";
     if (!crosshair) {
@@ -103,7 +103,7 @@ function togglePlace() {
     }
     crosshair.style.display = "flex";
   } else {
-    placeBtn.textContent      = "\u271B Voeg toe";
+    placeBtn.textContent      = "\u271B Add";
     placeBtn.style.background = "";
     confirmBtn.style.display  = "none";
     if (crosshair) crosshair.style.display = "none";
@@ -143,7 +143,7 @@ function clearWaypoints() {
   currentWPIndex = 0;
   if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
   if (navLine)   { map.removeLayer(navLine);   navLine   = null; }
-  document.getElementById("wp-info").textContent     = "Nog geen waypoints";
+  document.getElementById("wp-info").textContent     = "No waypoints yet";
   document.getElementById("target-dist").textContent = "-";
   document.getElementById("target-bear").textContent = "-";
 }
@@ -151,7 +151,7 @@ function clearWaypoints() {
 function updateWPInfo() {
   var n = waypoints.length;
   if (n === 0) {
-    document.getElementById("wp-info").textContent = "Nog geen waypoints";
+    document.getElementById("wp-info").textContent = "No waypoints yet";
     document.getElementById("next-btn").style.display = "none";
     return;
   }
@@ -188,7 +188,7 @@ function updateNavigation() {
 // ── Map (loaded lazily; works only when phone has internet) ───────────────────
 function initMap() {
   var mapDiv = document.getElementById("map");
-  mapDiv.textContent = "Kaart laden...";
+  mapDiv.textContent = "Loading map...";
 
   var css = document.createElement("link");
   css.rel  = "stylesheet";
@@ -207,7 +207,7 @@ function initMap() {
     // No tap handler needed — target is set from map center via confirm button
   };
   js.onerror = function () {
-    mapDiv.textContent = "Kaart niet beschikbaar (geen internet)";
+    mapDiv.textContent = "Map unavailable (no internet)";
   };
   document.head.appendChild(js);
 }
@@ -226,7 +226,7 @@ function update() {
 
       var st = document.getElementById("status");
       if (d.fix) {
-        st.textContent = "Fix verkregen";
+        st.textContent = "Fix acquired";
         st.className   = "value fix";
         currentLat = d.lat;
         currentLon = d.lon;
@@ -240,7 +240,7 @@ function update() {
         }
         updateNavigation();
       } else {
-        st.textContent = "Geen fix (wachten op GPS)";
+        st.textContent = "No fix (waiting for GPS)";
         st.className   = "value no-fix";
       }
 
@@ -249,7 +249,7 @@ function update() {
     })
     .catch(function (err) {
       var conn = document.getElementById("conn");
-      conn.textContent = "Fout: " + err.message;
+      conn.textContent = "Error: " + err.message;
       conn.className   = "value err";
     });
 }

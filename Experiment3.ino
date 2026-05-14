@@ -30,14 +30,14 @@ unsigned long lastCalc = 0;
 // to this ESP32, so no IP needs to be hardcoded anywhere.
 const char ROOT_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
-<html lang="nl">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GPS Tracker</title>
 </head>
 <body>
-  <div id="app"><p style="font-family:sans-serif;color:#eee;background:#1a1a2e;margin:0;padding:16px">Laden...</p></div>
+  <div id="app"><p style="font-family:sans-serif;color:#eee;background:#1a1a2e;margin:0;padding:16px">Loading...</p></div>
   <script>
   (function () {
     var BASE = 'https://robdenbesten.github.io/experiment3/';
@@ -115,25 +115,25 @@ void setup() {
   delay(100);               // let radio settle after mode switch
 
   if (!WiFi.config(FIXED_IP, FIXED_GATEWAY, FIXED_SUBNET)) {
-    Serial.println("Waarschuwing: vaste IP-configuratie mislukt.");
+    Serial.println("Warning: fixed IP configuration failed.");
   }
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  Serial.print("Verbinden");
+  Serial.print("Connecting");
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
   Serial.print("\nIP: ");
   Serial.println(WiFi.localIP());
-  Serial.print("Open op telefoon: http://");
+  Serial.print("Open on phone: http://");
   Serial.println(WiFi.localIP());
 
   server.on("/",     HTTP_GET,     handleRoot);
   server.on("/data", HTTP_GET,     handleData);
   server.on("/data", HTTP_OPTIONS, handleOptions);
   server.begin();
-  Serial.println("Klaar.");
+  Serial.println("Ready.");
 
   // ── GPS serial after WiFi is up ───────────────────────────────────────────
   gpsSerial.begin(GPS_BAUD, SERIAL_8N1, RX_PIN, TX_PIN);
