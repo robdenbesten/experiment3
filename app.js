@@ -39,6 +39,7 @@ var navLine        = null;   // dashed line: position → current waypoint
 var currentWPIndex = 0;      // which waypoint we're navigating to
 var currentLat     = null;
 var currentLon     = null;
+var lastTargetDist = null;
 
 // ── Navigation helpers ────────────────────────────────────────────────────────
 function toRad(deg) { return deg * Math.PI / 180; }
@@ -141,24 +142,37 @@ function clearWaypoints() {
   wpMarkers  = [];
   waypoints  = [];
   currentWPIndex = 0;
+  lastTargetDist = null;
   if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
   if (navLine)   { map.removeLayer(navLine);   navLine   = null; }
-  document.getElementById("wp-info").textContent     = "No waypoints yet";
+  updateWPInfo();
   document.getElementById("target-dist").textContent = "-";
   document.getElementById("target-bear").textContent = "-";
 }
 
 function updateWPInfo() {
   var n = waypoints.length;
+  var el = document.getElementById("wp-info");
   if (n === 0) {
-    document.getElementById("wp-info").textContent = "No waypoints yet";
-    document.getElementById("next-btn").style.display = "none";
+    el.textContent = "No waypoints yet";
     return;
   }
-  var wp = waypoints[currentWPIndex];
-  document.getElementById("wp-info").textContent =
-    (currentWPIndex + 1) + " / " + n + " \u2014 " +
-    wp.lat.toFixed(6) + "\u00b0, " + wp.lon.toFixed(6) + "\u00b0";
+
+  var completed = currentWPIndex;
+  if (currentWPIndex === n - 1 && lastTargetDist !== null && lastTargetDist <= 10) {
+    completed = n;
+  }
+
+  var ratio = Math.max(0, Math.min(1, completed / n));
+  var percent = (ratio * 100).toFixed(1);
+  var text = completed + "/" + n;
+
+  el.innerHTML =
+    '<div class="progress-wrap" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' +
+    Math.round(ratio * 100) + '">' +
+      '<div class="progress-fill" style="width:' + percent + '%"></div>' +
+      '<span class="progress-text">' + text + '</span>' +
+    '</div>';
 }
 
 function updateNavigation() {
@@ -173,6 +187,8 @@ function updateNavigation() {
     wp = waypoints[currentWPIndex];
     d  = haversineM(currentLat, currentLon, wp.lat, wp.lon);
   }
+  lastTargetDist = d;
+  updateWPInfo();
   var b = bearing(currentLat, currentLon, wp.lat, wp.lon);
   document.getElementById("target-dist").textContent =
     d >= 1000 ? (d / 1000).toFixed(2) + " km" : d.toFixed(0) + " m";
