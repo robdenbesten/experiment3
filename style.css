@@ -101,6 +101,11 @@ button {
   transition: background 0.15s ease;
 }
 
+#place-btn,
+#confirm-btn {
+  font-weight: 900;
+}
+
 button:hover {
   background: #555;
 }
