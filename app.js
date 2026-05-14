@@ -71,8 +71,10 @@ function bearingLabel(deg) {
 }
 
 // ── Waypoint icon (numbered circle) ──────────────────────────────────────────
-function wpIcon(n, active) {
-  var bg = active ? "#ffd700" : "#78909c";
+function wpIcon(n, state) {
+  var bg = "#78909c";
+  if (state === "active") bg = "#ffd700";
+  if (state === "reached") bg = "#4f5961";
   var html = '<div style="background:' + bg + ';color:#fff;border-radius:50%;' +
     'width:26px;height:26px;display:flex;align-items:center;justify-content:center;' +
     'font-weight:bold;font-size:13px;border:2px solid #fff;' +
@@ -80,9 +82,15 @@ function wpIcon(n, active) {
   return L.divIcon({ className: '', html: html, iconSize: [26, 26], iconAnchor: [13, 13] });
 }
 
+function waypointState(i) {
+  if (i < currentWPIndex) return "reached";
+  if (i === currentWPIndex) return "active";
+  return "upcoming";
+}
+
 function refreshMarkerIcons() {
   for (var i = 0; i < wpMarkers.length; i++) {
-    wpMarkers[i].setIcon(wpIcon(i + 1, i === currentWPIndex));
+    wpMarkers[i].setIcon(wpIcon(i + 1, waypointState(i)));
   }
 }
 
@@ -121,7 +129,7 @@ function confirmWaypoint() {
 function addWaypoint(lat, lon) {
   waypoints.push({ lat: lat, lon: lon });
   var idx = waypoints.length - 1;
-  var m = L.marker([lat, lon], { icon: wpIcon(idx + 1, idx === currentWPIndex) }).addTo(map);
+  var m = L.marker([lat, lon], { icon: wpIcon(idx + 1, waypointState(idx)) }).addTo(map);
   wpMarkers.push(m);
 
   // Route line through all waypoints
