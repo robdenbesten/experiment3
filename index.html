@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GPS Tracker</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h2>GPS Tracker</h2>
+
+  <div class="grid">
+    <div class="card full">
+      <div class="label">Verbinding</div>
+      <div class="value" id="conn">Verbinden...</div>
+    </div>
+    <div class="card full">
+      <div class="label">GPS Status</div>
+      <div class="value" id="status">-</div>
+    </div>
+
+    <div class="card">
+      <div class="label">Latitude</div>
+      <div class="value" id="lat">-</div>
+    </div>
+    <div class="card">
+      <div class="label">Longitude</div>
+      <div class="value" id="lon">-</div>
+    </div>
+    <div class="card">
+      <div class="label">Hoogte</div>
+      <div class="value" id="alt">-</div>
+    </div>
+    <div class="card">
+      <div class="label">Satellieten</div>
+      <div class="value" id="sats">-</div>
+    </div>
+    <div class="card">
+      <div class="label">Afstand tot vorig</div>
+      <div class="value" id="dist">-</div>
+    </div>
+    <div class="card">
+      <div class="label">Snelheid</div>
+      <div class="value" id="speed">-</div>
+    </div>
+  </div>
+
+  <div id="map"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
