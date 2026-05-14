@@ -16,7 +16,7 @@ app.innerHTML = [
     card("",     "target-bear", "Direction to waypoint",   "-"),
     '<div class="card full btn-row">',
       '<button id="place-btn" onclick="togglePlace()">&#x271B; Add</button>',
-      '<button id="confirm-btn" onclick="confirmWaypoint()" style="display:none;background:#a5d6a7">&#x2713; Confirm</button>',
+      '<button id="confirm-btn" onclick="confirmWaypoint()" style="display:none">&#x2713; Confirm</button>',
       '<button id="clear-btn" onclick="clearWaypoints()">&#x2715; Clear</button>',
     '</div>',
   '</div>',
@@ -70,7 +70,7 @@ function bearingLabel(deg) {
 
 // ── Waypoint icon (numbered circle) ──────────────────────────────────────────
 function wpIcon(n, active) {
-  var bg = active ? "#ef5350" : "#78909c";
+  var bg = active ? "#ffd700" : "#78909c";
   var html = '<div style="background:' + bg + ';color:#fff;border-radius:50%;' +
     'width:26px;height:26px;display:flex;align-items:center;justify-content:center;' +
     'font-weight:bold;font-size:13px;border:2px solid #fff;' +
@@ -94,7 +94,7 @@ function togglePlace() {
   var confirmBtn = document.getElementById("confirm-btn");
   if (placingMode) {
     placeBtn.textContent      = "Cancel";
-    placeBtn.style.background = "#ef9a9a";
+    placeBtn.style.color      = "#ffd700";
     confirmBtn.style.display  = "";
     if (!crosshair) {
       crosshair = document.createElement("div");
@@ -105,7 +105,7 @@ function togglePlace() {
     crosshair.style.display = "flex";
   } else {
     placeBtn.textContent      = "\u271B Add";
-    placeBtn.style.background = "";
+    placeBtn.style.color      = "";
     confirmBtn.style.display  = "none";
     if (crosshair) crosshair.style.display = "none";
   }
@@ -195,7 +195,7 @@ function updateNavigation() {
   document.getElementById("target-bear").textContent = bearingLabel(b);
   if (map) {
     if (!navLine) {
-      navLine = L.polyline([], { color: "#ef5350", weight: 2, dashArray: "6,6" }).addTo(map);
+      navLine = L.polyline([], { color: "#ffd700", weight: 2, dashArray: "6,6" }).addTo(map);
     }
     navLine.setLatLngs([[currentLat, currentLon], [wp.lat, wp.lon]]);
   }
