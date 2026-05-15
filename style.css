@@ -97,6 +97,38 @@ h2 {
   gap: 8px;
 }
 
+.route-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.route-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+#route-select {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  border: none;
+  border-radius: 9999px;
+  padding: 0 14px;
+  background: #2d2d2d;
+  color: #ececec;
+  font-size: 0.95em;
+}
+
+#save-route-btn {
+  flex: 0 0 120px;
+}
+
+#delete-route-btn {
+  flex: 0 0 84px;
+}
+
 button {
   flex: 1;
   height: 44px;
@@ -167,6 +199,11 @@ button:hover {
   background: #555;
 }
 
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 #crosshair {
   position: absolute;
   top: 0; left: 0; right: 0; bottom: 0;
@@ -201,6 +238,15 @@ button:hover {
 @media (max-width: 640px) {
   body {
     padding: 14px;
+  }
+
+  .route-controls {
+    flex-wrap: wrap;
+  }
+
+  #save-route-btn,
+  #delete-route-btn {
+    flex: 1 1 calc(50% - 4px);
   }
 
   #map {

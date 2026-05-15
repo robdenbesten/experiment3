@@ -14,6 +14,16 @@ app.innerHTML = [
     card("full", "wp-info",     "Waypoint",                "No waypoints yet"),
     card("",     "target-dist", "Distance to waypoint",    "-"),
     card("",     "target-bear", "Direction to waypoint",   "-"),
+    '<div class="card full route-manager">',
+      '<div class="label">Saved routes</div>',
+      '<div class="route-controls">',
+        '<select id="route-select" onchange="loadSelectedRoute()">',
+          '<option value="">No saved routes</option>',
+        '</select>',
+        '<button id="save-route-btn" onclick="saveCurrentRoute()">Save Route</button>',
+        '<button id="delete-route-btn" onclick="deleteSelectedRoute()" aria-label="Delete selected route">Delete</button>',
+      '</div>',
+    '</div>',
     '<div class="card full btn-row" id="action-row">',
       '<div class="action-stack">',
         '<button id="confirm-btn" onclick="confirmWaypoint()">&#x2713; Confirm</button>',
@@ -48,8 +58,11 @@ var recordingPoints = [];
 var recordingLine   = null;
 var recordings      = [];
 var recordingStartedAt = null;
+var savedRoutes     = [];
+var loadingRoute    = false;
 
 var RECORDINGS_STORAGE_KEY = "gps_recordings_v1";
+var SAVED_ROUTES_STORAGE_KEY = "gps_saved_routes_v1";
 
 // ── Navigation helpers ────────────────────────────────────────────────────────
 function toRad(deg) { return deg * Math.PI / 180; }
@@ -100,6 +113,196 @@ function saveRecordings() {
   try {
     localStorage.setItem(RECORDINGS_STORAGE_KEY, JSON.stringify(recordings));
   } catch (_) {}
+}
+
+function loadSavedRoutes() {
+  try {
+    var raw = localStorage.getItem(SAVED_ROUTES_STORAGE_KEY);
+    if (!raw) {
+      savedRoutes = [];
+      return;
+    }
+
+    var parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      savedRoutes = [];
+      return;
+    }
+
+    savedRoutes = parsed.filter(function (route) {
+      if (!route || typeof route.name !== "string" || !Array.isArray(route.waypoints)) {
+        return false;
+      }
+      return route.waypoints.every(function (wp) {
+        return wp && typeof wp.lat === "number" && typeof wp.lon === "number";
+      });
+    });
+  } catch (_) {
+    savedRoutes = [];
+  }
+}
+
+function saveSavedRoutes() {
+  try {
+    localStorage.setItem(SAVED_ROUTES_STORAGE_KEY, JSON.stringify(savedRoutes));
+  } catch (_) {}
+}
+
+function refreshRouteDropdown(selectedId) {
+  var select = document.getElementById("route-select");
+  if (!select) return;
+
+  select.innerHTML = "";
+
+  var placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = savedRoutes.length ? "Select saved route" : "No saved routes";
+  select.appendChild(placeholder);
+
+  for (var i = 0; i < savedRoutes.length; i++) {
+    var route = savedRoutes[i];
+    var option = document.createElement("option");
+    option.value = route.id;
+    option.textContent = route.name + " (" + route.waypoints.length + " pts)";
+    select.appendChild(option);
+  }
+
+  if (selectedId) {
+    select.value = selectedId;
+  } else {
+    select.value = "";
+  }
+
+  updateRouteButtons();
+}
+
+function updateRouteButtons() {
+  var saveBtn = document.getElementById("save-route-btn");
+  var deleteBtn = document.getElementById("delete-route-btn");
+  var select = document.getElementById("route-select");
+  if (!saveBtn || !deleteBtn || !select) return;
+
+  saveBtn.disabled = waypoints.length === 0;
+  deleteBtn.disabled = !select.value;
+}
+
+function clearWaypointsInternal() {
+  for (var i = 0; i < wpMarkers.length; i++) {
+    map.removeLayer(wpMarkers[i]);
+  }
+  wpMarkers = [];
+  waypoints = [];
+  currentWPIndex = 0;
+  lastTargetDist = null;
+
+  if (routeLine) {
+    map.removeLayer(routeLine);
+    routeLine = null;
+  }
+  if (navLine) {
+    map.removeLayer(navLine);
+    navLine = null;
+  }
+
+  updateWPInfo();
+  document.getElementById("target-dist").textContent = "-";
+  document.getElementById("target-bear").textContent = "-";
+  updateRouteButtons();
+}
+
+function saveCurrentRoute() {
+  if (!waypoints.length) {
+    window.alert("Add at least one waypoint before saving a route.");
+    return;
+  }
+
+  var defaultName = "Route " + new Date().toLocaleString();
+  var inputName = window.prompt("Route name", defaultName);
+  if (inputName === null) return;
+
+  var name = inputName.trim();
+  if (!name) {
+    window.alert("Route name cannot be empty.");
+    return;
+  }
+
+  var route = {
+    id: "route-" + Date.now() + "-" + Math.floor(Math.random() * 100000),
+    name: name,
+    createdAt: new Date().toISOString(),
+    waypoints: waypoints.map(function (wp) {
+      return { lat: wp.lat, lon: wp.lon };
+    })
+  };
+
+  savedRoutes.push(route);
+  saveSavedRoutes();
+  refreshRouteDropdown(route.id);
+}
+
+function loadRouteById(routeId) {
+  if (!routeId) return;
+  if (!map || !window.L) {
+    window.alert("Map is still loading. Try again in a moment.");
+    return;
+  }
+  var route = null;
+  for (var i = 0; i < savedRoutes.length; i++) {
+    if (savedRoutes[i].id === routeId) {
+      route = savedRoutes[i];
+      break;
+    }
+  }
+  if (!route) return;
+
+  loadingRoute = true;
+  clearWaypointsInternal();
+  for (var j = 0; j < route.waypoints.length; j++) {
+    var wp = route.waypoints[j];
+    addWaypoint(wp.lat, wp.lon);
+  }
+  loadingRoute = false;
+
+  if (map && route.waypoints.length) {
+    var bounds = L.latLngBounds(route.waypoints.map(function (wp2) {
+      return [wp2.lat, wp2.lon];
+    }));
+    map.fitBounds(bounds, { padding: [24, 24] });
+  }
+
+  refreshRouteDropdown(route.id);
+}
+
+function loadSelectedRoute() {
+  var select = document.getElementById("route-select");
+  if (!select || !select.value) {
+    updateRouteButtons();
+    return;
+  }
+  loadRouteById(select.value);
+}
+
+function deleteSelectedRoute() {
+  var select = document.getElementById("route-select");
+  if (!select || !select.value) return;
+
+  var routeId = select.value;
+  var idx = -1;
+  for (var i = 0; i < savedRoutes.length; i++) {
+    if (savedRoutes[i].id === routeId) {
+      idx = i;
+      break;
+    }
+  }
+  if (idx < 0) return;
+
+  if (!window.confirm("Delete route '" + savedRoutes[idx].name + "'?")) {
+    return;
+  }
+
+  savedRoutes.splice(idx, 1);
+  saveSavedRoutes();
+  refreshRouteDropdown("");
 }
 
 function updateRecordButton() {
@@ -295,6 +498,9 @@ function addWaypoint(lat, lon) {
 
   updateWPInfo();
   updateNavigation();
+  if (!loadingRoute) {
+    updateRouteButtons();
+  }
 }
 
 function clearWaypoints() {
@@ -302,16 +508,7 @@ function clearWaypoints() {
     return;
   }
 
-  for (var i = 0; i < wpMarkers.length; i++) { map.removeLayer(wpMarkers[i]); }
-  wpMarkers  = [];
-  waypoints  = [];
-  currentWPIndex = 0;
-  lastTargetDist = null;
-  if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
-  if (navLine)   { map.removeLayer(navLine);   navLine   = null; }
-  updateWPInfo();
-  document.getElementById("target-dist").textContent = "-";
-  document.getElementById("target-bear").textContent = "-";
+  clearWaypointsInternal();
 }
 
 function updateWPInfo() {
@@ -441,6 +638,8 @@ function update() {
 
 // Start immediately, then every second
 loadRecordings();
+loadSavedRoutes();
+refreshRouteDropdown("");
 updateRecordButton();
 update();
 setInterval(update, 1000);
