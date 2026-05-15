@@ -148,15 +148,17 @@ function updateHeadingCone() {
   var latlngs = getHeadingConeLatLngs(currentLat, currentLon, currentHeading);
   if (!headingCone) {
     headingCone = L.polygon(latlngs, {
-      color: "#4fc3f7",
-      weight: 1,
-      opacity: 0.9,
+      color: "transparent",
+      weight: 0,
+      opacity: 0,
       fillColor: "#4fc3f7",
-      fillOpacity: 0.2,
+      fillOpacity: 0.75,
       interactive: false
     }).addTo(map);
+    headingCone.bringToBack();
   } else {
     headingCone.setLatLngs(latlngs);
+    headingCone.bringToBack();
   }
 }
 
