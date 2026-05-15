@@ -58,11 +58,13 @@ var recordingPoints = [];
 var recordingLine   = null;
 var recordings      = [];
 var recordingStartedAt = null;
-var savedRoutes     = [];
+var localRoutes     = [];
+var githubRoutes    = [];
 var loadingRoute    = false;
 
 var RECORDINGS_STORAGE_KEY = "gps_recordings_v1";
-var SAVED_ROUTES_STORAGE_KEY = "gps_saved_routes_v1";
+var LOCAL_ROUTES_STORAGE_KEY = "gps_saved_routes_v1";
+var GITHUB_ROUTES_URL = "https://robdenbesten.github.io/experiment3/routes.json";
 
 // ── Navigation helpers ────────────────────────────────────────────────────────
 function toRad(deg) { return deg * Math.PI / 180; }
@@ -115,55 +117,131 @@ function saveRecordings() {
   } catch (_) {}
 }
 
+function normalizeRoute(route, source, fallbackId) {
+  if (!route || typeof route.name !== "string" || !Array.isArray(route.waypoints)) {
+    return null;
+  }
+
+  var normalizedWaypoints = [];
+  for (var i = 0; i < route.waypoints.length; i++) {
+    var wp = route.waypoints[i];
+    if (!wp || typeof wp.lat !== "number" || typeof wp.lon !== "number") {
+      return null;
+    }
+    normalizedWaypoints.push({ lat: wp.lat, lon: wp.lon });
+  }
+
+  var cleanName = route.name.trim();
+  if (!cleanName) {
+    cleanName = "Unnamed route";
+  }
+
+  var rawId = (typeof route.id === "string" && route.id.trim()) ? route.id.trim() : fallbackId;
+  if (!rawId) {
+    rawId = String(Date.now()) + "-" + String(Math.floor(Math.random() * 100000));
+  }
+
+  var id = source === "github" ? "gh-" + rawId : rawId;
+
+  return {
+    id: id,
+    source: source,
+    name: cleanName,
+    createdAt: typeof route.createdAt === "string" ? route.createdAt : new Date().toISOString(),
+    waypoints: normalizedWaypoints
+  };
+}
+
+function getAllRoutes() {
+  return githubRoutes.concat(localRoutes);
+}
+
+function findRouteById(routeId) {
+  if (!routeId) return null;
+  var allRoutes = getAllRoutes();
+  for (var i = 0; i < allRoutes.length; i++) {
+    if (allRoutes[i].id === routeId) {
+      return allRoutes[i];
+    }
+  }
+  return null;
+}
+
 function loadSavedRoutes() {
   try {
-    var raw = localStorage.getItem(SAVED_ROUTES_STORAGE_KEY);
+    var raw = localStorage.getItem(LOCAL_ROUTES_STORAGE_KEY);
     if (!raw) {
-      savedRoutes = [];
+      localRoutes = [];
       return;
     }
 
     var parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) {
-      savedRoutes = [];
+      localRoutes = [];
       return;
     }
 
-    savedRoutes = parsed.filter(function (route) {
-      if (!route || typeof route.name !== "string" || !Array.isArray(route.waypoints)) {
-        return false;
-      }
-      return route.waypoints.every(function (wp) {
-        return wp && typeof wp.lat === "number" && typeof wp.lon === "number";
-      });
+    localRoutes = parsed.map(function (route, idx) {
+      return normalizeRoute(route, "local", "local-" + idx);
+    }).filter(function (route) {
+      return route !== null;
     });
   } catch (_) {
-    savedRoutes = [];
+    localRoutes = [];
   }
 }
 
 function saveSavedRoutes() {
   try {
-    localStorage.setItem(SAVED_ROUTES_STORAGE_KEY, JSON.stringify(savedRoutes));
+    localStorage.setItem(LOCAL_ROUTES_STORAGE_KEY, JSON.stringify(localRoutes));
   } catch (_) {}
+}
+
+function loadGitHubRoutes() {
+  var select = document.getElementById("route-select");
+  var prevSelectedId = select ? select.value : "";
+
+  fetch(GITHUB_ROUTES_URL + "?v=" + Date.now(), { cache: "no-store" })
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (parsed) {
+      if (!Array.isArray(parsed)) {
+        githubRoutes = [];
+      } else {
+        githubRoutes = parsed.map(function (route, idx) {
+          return normalizeRoute(route, "github", "github-" + idx);
+        }).filter(function (route) {
+          return route !== null;
+        });
+      }
+      refreshRouteDropdown(findRouteById(prevSelectedId) ? prevSelectedId : "");
+    })
+    .catch(function () {
+      githubRoutes = [];
+      refreshRouteDropdown(findRouteById(prevSelectedId) ? prevSelectedId : "");
+    });
 }
 
 function refreshRouteDropdown(selectedId) {
   var select = document.getElementById("route-select");
   if (!select) return;
+  var allRoutes = getAllRoutes();
 
   select.innerHTML = "";
 
   var placeholder = document.createElement("option");
   placeholder.value = "";
-  placeholder.textContent = savedRoutes.length ? "Select saved route" : "No saved routes";
+  placeholder.textContent = allRoutes.length ? "Select saved route" : "No saved routes";
   select.appendChild(placeholder);
 
-  for (var i = 0; i < savedRoutes.length; i++) {
-    var route = savedRoutes[i];
+  for (var i = 0; i < allRoutes.length; i++) {
+    var route = allRoutes[i];
     var option = document.createElement("option");
     option.value = route.id;
-    option.textContent = route.name + " (" + route.waypoints.length + " pts)";
+    var prefix = route.source === "github" ? "GitHub: " : "Local: ";
+    option.textContent = prefix + route.name + " (" + route.waypoints.length + " pts)";
     select.appendChild(option);
   }
 
@@ -182,8 +260,9 @@ function updateRouteButtons() {
   var select = document.getElementById("route-select");
   if (!saveBtn || !deleteBtn || !select) return;
 
+  var selectedRoute = findRouteById(select.value);
   saveBtn.disabled = waypoints.length === 0;
-  deleteBtn.disabled = !select.value;
+  deleteBtn.disabled = !selectedRoute || selectedRoute.source !== "local";
 }
 
 function clearWaypointsInternal() {
@@ -228,6 +307,7 @@ function saveCurrentRoute() {
 
   var route = {
     id: "route-" + Date.now() + "-" + Math.floor(Math.random() * 100000),
+    source: "local",
     name: name,
     createdAt: new Date().toISOString(),
     waypoints: waypoints.map(function (wp) {
@@ -235,7 +315,7 @@ function saveCurrentRoute() {
     })
   };
 
-  savedRoutes.push(route);
+  localRoutes.push(route);
   saveSavedRoutes();
   refreshRouteDropdown(route.id);
 }
@@ -246,13 +326,7 @@ function loadRouteById(routeId) {
     window.alert("Map is still loading. Try again in a moment.");
     return;
   }
-  var route = null;
-  for (var i = 0; i < savedRoutes.length; i++) {
-    if (savedRoutes[i].id === routeId) {
-      route = savedRoutes[i];
-      break;
-    }
-  }
+  var route = findRouteById(routeId);
   if (!route) return;
 
   loadingRoute = true;
@@ -287,20 +361,27 @@ function deleteSelectedRoute() {
   if (!select || !select.value) return;
 
   var routeId = select.value;
+  var selectedRoute = findRouteById(routeId);
+  if (!selectedRoute) return;
+  if (selectedRoute.source !== "local") {
+    window.alert("GitHub routes are read-only here. Edit routes.json in your GitHub repo to change them.");
+    return;
+  }
+
   var idx = -1;
-  for (var i = 0; i < savedRoutes.length; i++) {
-    if (savedRoutes[i].id === routeId) {
+  for (var i = 0; i < localRoutes.length; i++) {
+    if (localRoutes[i].id === routeId) {
       idx = i;
       break;
     }
   }
   if (idx < 0) return;
 
-  if (!window.confirm("Delete route '" + savedRoutes[idx].name + "'?")) {
+  if (!window.confirm("Delete route '" + localRoutes[idx].name + "'?")) {
     return;
   }
 
-  savedRoutes.splice(idx, 1);
+  localRoutes.splice(idx, 1);
   saveSavedRoutes();
   refreshRouteDropdown("");
 }
@@ -640,6 +721,7 @@ function update() {
 loadRecordings();
 loadSavedRoutes();
 refreshRouteDropdown("");
+loadGitHubRoutes();
 updateRecordButton();
 update();
 setInterval(update, 1000);

@@ -1,0 +1,11 @@
+[
+  {
+    "id": "sample-utrecht-loop",
+    "name": "Sample Utrecht Loop",
+    "waypoints": [
+      { "lat": 52.0907, "lon": 5.1214 },
+      { "lat": 52.0916, "lon": 5.1270 },
+      { "lat": 52.0888, "lon": 5.1302 }
+    ]
+  }
+]
