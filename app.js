@@ -32,6 +32,7 @@ app.innerHTML = [
       '</div>',
       '<button id="record-btn" onclick="toggleRecording()" aria-pressed="false">&#x25CF; Record</button>',
       '<button id="clear-btn" onclick="clearWaypoints()" aria-label="Clear waypoints">&#x2715;</button>',
+      '<button id="calibrate-btn" onclick="calibrateMagnetometer()" aria-label="Calibrate magnetometer">Calibrate</button>',
     '</div>',
   '</div>',
   '<div id="map"></div>'
@@ -453,6 +454,36 @@ function deleteSelectedRoute() {
   localRoutes.splice(idx, 1);
   saveSavedRoutes();
   refreshRouteDropdown("");
+}
+
+function calibrateMagnetometer() {
+  var btn = document.getElementById("calibrate-btn");
+  if (!btn) return;
+  
+  btn.disabled = true;
+  btn.textContent = "Calibrating...";
+  
+  var esp32Ip = window.location.hostname;
+  fetch("http://" + esp32Ip + ":80/calibrate", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"}
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    console.log("Calibration started:", d);
+    // Wait 10 seconds for calibration to complete
+    setTimeout(function() {
+      btn.disabled = false;
+      btn.textContent = "Calibrate";
+      window.alert("Magnetometer calibration complete! Please rotate the device in all directions during calibration.");
+    }, 10500);
+  })
+  .catch(function(e) {
+    console.error("Calibration error:", e);
+    btn.disabled = false;
+    btn.textContent = "Calibrate";
+    window.alert("Calibration failed. Check connection to ESP32.");
+  });
 }
 
 function updateRecordButton() {

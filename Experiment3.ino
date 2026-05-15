@@ -4,6 +4,7 @@
 #include <WebServer.h>
 #include <Wire.h>
 #include <qmc5883p.h>
+#include <Preferences.h>
 
 const char* WIFI_SSID     = "Gringo Burru";
 const char* WIFI_PASSWORD = "Campina1";
@@ -24,6 +25,23 @@ TinyGPSPlus gps;
 HardwareSerial gpsSerial(1);
 WebServer server(80);
 QMC5883P mag;
+Preferences preferences;
+
+// Calibration state
+bool calibrating = false;
+unsigned long calibrationStart = 0;
+const unsigned long calibrationDuration = 10000; // 10 seconds
+float minX = 1e6, maxX = -1e6;
+float minY = 1e6, maxY = -1e6;
+float minZ = 1e6, maxZ = -1e6;
+float offX = 0, offY = 0, offZ = 0;
+bool calibrationLoadedFromStorage = false;
+
+const char* calibrationNs = "magcal";
+const char* keyCalValid = "valid";
+const char* keyOffX = "offX";
+const char* keyOffY = "offY";
+const char* keyOffZ = "offZ";
 
 double prevLat = 0, prevLon = 0;
 bool   hasPrev = false;
@@ -34,13 +52,55 @@ unsigned long lastHeadingRead = 0;
 bool  headingValid = false;
 float headingDeg   = 0.0f;
 
+bool loadCalibrationFromStorage() {
+  bool loaded = false;
+  if (!preferences.begin(calibrationNs, true)) {
+    Serial.println("Calibration storage open (read) failed");
+    return false;
+  }
+
+  bool valid = preferences.getBool(keyCalValid, false);
+  if (valid) {
+    offX = preferences.getFloat(keyOffX, 0.0f);
+    offY = preferences.getFloat(keyOffY, 0.0f);
+    offZ = preferences.getFloat(keyOffZ, 0.0f);
+    loaded = true;
+  }
+
+  preferences.end();
+  return loaded;
+}
+
+void saveCalibrationToStorage() {
+  if (!preferences.begin(calibrationNs, false)) {
+    Serial.println("Calibration storage open (write) failed");
+    return;
+  }
+
+  preferences.putFloat(keyOffX, offX);
+  preferences.putFloat(keyOffY, offY);
+  preferences.putFloat(keyOffZ, offZ);
+  preferences.putBool(keyCalValid, true);
+  preferences.end();
+}
+
+void startCalibration() {
+  calibrating = true;
+  minX = 1e6; maxX = -1e6;
+  minY = 1e6; maxY = -1e6;
+  minZ = 1e6; maxZ = -1e6;
+  calibrationStart = millis();
+  Serial.println("Calibration started via web interface");
+}
+
 bool readHeading(float& outHeadingDeg) {
   float xyz[3];
   if (!mag.readXYZ(xyz)) return false;
 
-  // Skip calibration for now as requested.
-  float x = xyz[0];
-  float y = xyz[1];
+  // Apply calibration offsets
+  float x = xyz[0] - offX;
+  float y = xyz[1] - offY;
+  float z = xyz[2] - offZ;
 
   if (x == 0.0f && y == 0.0f) return false;
 
@@ -106,6 +166,18 @@ void handleOptions() {
   server.send(204);
 }
 
+void handleCalibrate() {
+  server.sendHeader("Access-Control-Allow-Origin",          "*");
+  server.sendHeader("Access-Control-Allow-Private-Network", "true");
+  
+  if (server.method() == HTTP_POST || server.method() == HTTP_GET) {
+    startCalibration();
+    server.send(200, "application/json", "{\"status\":\"calibrating\"}");
+  } else {
+    server.send(405);
+  }
+}
+
 void handleData() {
   char json[320];
   snprintf(json, sizeof(json),
@@ -140,6 +212,12 @@ void setup() {
   Wire.setClock(100000);
   if (mag.begin()) {
     Serial.println("Magnetometer initialized (QMC5883P path) on SDA=9, SCL=8");
+    calibrationLoadedFromStorage = loadCalibrationFromStorage();
+    if (calibrationLoadedFromStorage) {
+      Serial.printf("Loaded calibration offsets: X=%.2f, Y=%.2f, Z=%.2f\n", offX, offY, offZ);
+    } else {
+      Serial.println("No saved calibration found. Click calibrate button to start.");
+    }
   } else {
     Serial.println("Warning: magnetometer init failed.");
   }
@@ -168,6 +246,9 @@ void setup() {
   server.on("/",     HTTP_GET,     handleRoot);
   server.on("/data", HTTP_GET,     handleData);
   server.on("/data", HTTP_OPTIONS, handleOptions);
+  server.on("/calibrate", HTTP_GET,     handleCalibrate);
+  server.on("/calibrate", HTTP_POST,    handleCalibrate);
+  server.on("/calibrate", HTTP_OPTIONS, handleOptions);
   server.begin();
   Serial.println("Ready.");
 
@@ -182,6 +263,35 @@ void loop() {
   }
 
   server.handleClient();
+
+  // Handle magnetometer calibration
+  if (calibrating) {
+    float xyz[3];
+    if (mag.readXYZ(xyz)) {
+      float x = xyz[0];
+      float y = xyz[1];
+      float z = xyz[2];
+
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      if (z < minZ) minZ = z;
+      if (z > maxZ) maxZ = z;
+    }
+
+    if (millis() - calibrationStart > calibrationDuration) {
+      calibrating = false;
+      offX = (minX + maxX) / 2.0;
+      offY = (minY + maxY) / 2.0;
+      offZ = (minZ + maxZ) / 2.0;
+      saveCalibrationToStorage();
+      Serial.println("Calibration complete");
+      Serial.printf("Offsets: X=%.2f, Y=%.2f, Z=%.2f\n", offX, offY, offZ);
+    }
+    delay(10);
+    return;
+  }
 
   while (gpsSerial.available()) {
     gps.encode(gpsSerial.read());
