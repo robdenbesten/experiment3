@@ -5,7 +5,7 @@ var DATA_URL = "http://" + window.location.hostname + "/data";
 // ── Build DOM ─────────────────────────────────────────────────────────────────
 var app = document.getElementById("app");
 app.innerHTML = [
-  '<h2>GPS Tracker V4</h2>',
+  '<h2>Experiment 3</h2>',
   '<div class="grid">',
     card("",     "conn",        "Connection",              "Connecting..."),
     card("",     "status",      "GPS Status",              "-"),
@@ -26,8 +26,8 @@ app.innerHTML = [
     '</div>',
     '<div class="card full btn-row" id="action-row">',
       '<div class="action-stack">',
-        '<button id="confirm-btn" onclick="confirmWaypoint()">&#x2713; Confirm</button>',
-        '<button id="place-btn" onclick="togglePlace()">&#x271B; Add</button>',
+        '<button id="confirm-btn" onclick="confirmWaypoint()">Add</button>',
+        '<button id="place-btn" onclick="togglePlace()">Add Waypoints</button>',
       '</div>',
       '<button id="record-btn" onclick="toggleRecording()" aria-pressed="false">&#x25CF; Record</button>',
       '<button id="clear-btn" onclick="clearWaypoints()" aria-label="Clear waypoints">&#x2715;</button>',
@@ -540,7 +540,7 @@ function togglePlace() {
   var placeBtn   = document.getElementById("place-btn");
   if (placingMode) {
     actionRow.classList.add("placing");
-    placeBtn.textContent      = "Cancel";
+    placeBtn.textContent      = "Done";
     if (!crosshair) {
       crosshair = document.createElement("div");
       crosshair.id = "crosshair";
@@ -550,7 +550,7 @@ function togglePlace() {
     crosshair.style.display = "flex";
   } else {
     actionRow.classList.remove("placing");
-    placeBtn.textContent      = "\u271B Add";
+    placeBtn.textContent      = "Add Waypoints";
     if (crosshair) crosshair.style.display = "none";
   }
 }
@@ -559,7 +559,6 @@ function confirmWaypoint() {
   if (!map) return;
   var c = map.getCenter();
   addWaypoint(c.lat, c.lng);
-  togglePlace();
 }
 
 function addWaypoint(lat, lon) {

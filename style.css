@@ -115,10 +115,21 @@ h2 {
   height: 44px;
   border: none;
   border-radius: 9999px;
-  padding: 0 14px;
+  padding: 0 40px 0 14px;
   background: #2d2d2d;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath fill='%23ececec' d='M1.4 1.2L6 5.8l4.6-4.6 1.4 1.4L6 8 0 2.6z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 12px 8px;
   color: #ececec;
   font-size: 0.95em;
+  line-height: 44px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+#route-select::-ms-expand {
+  display: none;
 }
 
 #save-route-btn {
