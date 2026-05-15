@@ -19,6 +19,7 @@ app.innerHTML = [
         '<button id="confirm-btn" onclick="confirmWaypoint()">&#x2713; Confirm</button>',
         '<button id="place-btn" onclick="togglePlace()">&#x271B; Add</button>',
       '</div>',
+      '<button id="record-btn" onclick="toggleRecording()" aria-pressed="false">&#x25CF; Record</button>',
       '<button id="clear-btn" onclick="clearWaypoints()" aria-label="Clear waypoints">&#x2715;</button>',
     '</div>',
   '</div>',
@@ -42,6 +43,15 @@ var currentWPIndex = 0;      // which waypoint we're navigating to
 var currentLat     = null;
 var currentLon     = null;
 var lastTargetDist = null;
+var recording      = false;
+var recordingPoints = [];
+var recordingLine   = null;
+var recordings      = [];
+var recordingStartedAt = null;
+
+var RECORDINGS_STORAGE_KEY = "gps_recordings_v1";
+var RECORD_MIN_STEP_M      = 3;
+var RECORD_MAX_POINTS      = 5000;
 
 // ── Navigation helpers ────────────────────────────────────────────────────────
 function toRad(deg) { return deg * Math.PI / 180; }
@@ -68,6 +78,164 @@ function bearing(lat1, lon1, lat2, lon2) {
 function bearingLabel(deg) {
   var dirs = ["N","NNO","NO","ONO","O","OZO","ZO","ZZO","Z","ZZW","ZW","WZW","W","WNW","NW","NNW"];
   return dirs[Math.round(deg / 22.5) % 16] + " (" + Math.round(deg) + "\u00b0)";
+}
+
+// ── Recording and path persistence ───────────────────────────────────────────
+function loadRecordings() {
+  try {
+    var raw = localStorage.getItem(RECORDINGS_STORAGE_KEY);
+    if (!raw) return;
+    var parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      recordings = [];
+      return;
+    }
+    recordings = parsed.filter(function (rec) {
+      return rec && Array.isArray(rec.points) && typeof rec.startedAt === "string";
+    });
+  } catch (_) {
+    recordings = [];
+  }
+}
+
+function saveRecordings() {
+  try {
+    localStorage.setItem(RECORDINGS_STORAGE_KEY, JSON.stringify(recordings));
+  } catch (_) {}
+}
+
+function updateRecordButton() {
+  var btn = document.getElementById("record-btn");
+  if (!btn) return;
+  if (recording) {
+    btn.textContent = "■ Stop";
+    btn.classList.add("recording");
+    btn.setAttribute("aria-pressed", "true");
+  } else {
+    btn.textContent = "● Record";
+    btn.classList.remove("recording");
+    btn.setAttribute("aria-pressed", "false");
+  }
+}
+
+function updateRecordLine() {
+  if (!map || !recording || recordingPoints.length < 2) return;
+  if (!recordingLine) {
+    recordingLine = L.polyline(recordingPoints, {
+      color: "#c9a400",
+      weight: 3,
+      opacity: 0.85
+    }).addTo(map);
+  } else {
+    recordingLine.setLatLngs(recordingPoints);
+  }
+}
+
+function addRecordPoint(lat, lon) {
+  if (!recording) return;
+
+  if (!recordingPoints.length) {
+    recordingPoints.push([lat, lon]);
+    updateRecordLine();
+    return;
+  }
+
+  var last = recordingPoints[recordingPoints.length - 1];
+  var moved = haversineM(last[0], last[1], lat, lon);
+  if (moved < RECORD_MIN_STEP_M) return;
+
+  recordingPoints.push([lat, lon]);
+  if (recordingPoints.length > RECORD_MAX_POINTS) {
+    recordingPoints.shift();
+  }
+  updateRecordLine();
+}
+
+function timestampForFilename(isoString) {
+  return isoString.replace(/[.:]/g, "-").replace("T", "_").replace("Z", "");
+}
+
+function downloadRecording(rec) {
+  try {
+    var featureCollection = {
+      type: "FeatureCollection",
+      features: [{
+        type: "Feature",
+        properties: {
+          startedAt: rec.startedAt,
+          points: rec.points.length
+        },
+        geometry: {
+          type: "LineString",
+          coordinates: rec.points.map(function (p) { return [p[1], p[0]]; })
+        }
+      }]
+    };
+
+    var blob = new Blob([JSON.stringify(featureCollection, null, 2)], {
+      type: "application/geo+json"
+    });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "gps-track-" + timestampForFilename(rec.startedAt) + ".geojson";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function stopRecording() {
+  if (!recording) return;
+
+  recording = false;
+  if (recordingLine && map) {
+    map.removeLayer(recordingLine);
+  }
+  recordingLine = null;
+
+  var enoughPoints = recordingPoints.length >= 2;
+  if (enoughPoints) {
+    var rec = {
+      startedAt: recordingStartedAt || new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+      points: recordingPoints.slice()
+    };
+    recordings.push(rec);
+    saveRecordings();
+
+    // On mobile browsers this usually saves to Downloads or Files.
+    if (!downloadRecording(rec)) {
+      window.alert("Track saved in browser storage, but download failed.");
+    }
+  }
+
+  recordingPoints = [];
+  recordingStartedAt = null;
+  updateRecordButton();
+}
+
+function startRecording() {
+  recording = true;
+  recordingPoints = [];
+  recordingStartedAt = new Date().toISOString();
+  if (recordingLine && map) {
+    map.removeLayer(recordingLine);
+    recordingLine = null;
+  }
+  updateRecordButton();
+}
+
+function toggleRecording() {
+  if (recording) {
+    stopRecording();
+  } else {
+    startRecording();
+  }
 }
 
 // ── Waypoint icon (numbered circle) ──────────────────────────────────────────
@@ -232,6 +400,10 @@ function initMap() {
       attribution: "&copy; OpenStreetMap"
     }).addTo(map);
 
+    if (recording && recordingPoints.length > 1) {
+      updateRecordLine();
+    }
+
     // No tap handler needed — target is set from map center via confirm button
   };
   js.onerror = function () {
@@ -266,6 +438,7 @@ function update() {
             map.setView([d.lat, d.lon], 17);
           }
         }
+        addRecordPoint(d.lat, d.lon);
         updateNavigation();
       } else {
         st.textContent = "No fix (waiting for GPS)";
@@ -283,6 +456,8 @@ function update() {
 }
 
 // Start immediately, then every second
+loadRecordings();
+updateRecordButton();
 update();
 setInterval(update, 1000);
 if (document.readyState === "complete") {
@@ -290,3 +465,4 @@ if (document.readyState === "complete") {
 } else {
   window.addEventListener("load", initMap);
 }
+
