@@ -53,6 +53,7 @@ var navLine        = null;   // dashed line: position → current waypoint
 var currentWPIndex = 0;      // which waypoint we're navigating to
 var currentLat     = null;
 var currentLon     = null;
+var currentHeading = null;
 var lastTargetDist = null;
 var recording      = false;
 var recordingPoints = [];
@@ -66,6 +67,10 @@ var loadingRoute    = false;
 var RECORDINGS_STORAGE_KEY = "gps_recordings_v1";
 var LOCAL_ROUTES_STORAGE_KEY = "gps_saved_routes_v1";
 var GITHUB_ROUTES_URL = "https://robdenbesten.github.io/experiment3/routes.json";
+var headingCone = null;
+var HEADING_CONE_ANGLE_DEG = 55;
+var HEADING_CONE_RANGE_M   = 22;
+var HEADING_CONE_STEPS     = 12;
 
 // ── Navigation helpers ────────────────────────────────────────────────────────
 function toRad(deg) { return deg * Math.PI / 180; }
@@ -98,6 +103,61 @@ function headingLabel(deg) {
   if (typeof deg !== "number" || !isFinite(deg)) return "-";
   var normalized = ((deg % 360) + 360) % 360;
   return bearingLabel(normalized);
+}
+
+function destinationPoint(lat, lon, bearingDeg, distanceM) {
+  var R = 6371000;
+  var brng = toRad(bearingDeg);
+  var lat1 = toRad(lat);
+  var lon1 = toRad(lon);
+  var angDist = distanceM / R;
+
+  var lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(angDist) +
+    Math.cos(lat1) * Math.sin(angDist) * Math.cos(brng)
+  );
+  var lon2 = lon1 + Math.atan2(
+    Math.sin(brng) * Math.sin(angDist) * Math.cos(lat1),
+    Math.cos(angDist) - Math.sin(lat1) * Math.sin(lat2)
+  );
+
+  return [toDeg(lat2), toDeg(lon2)];
+}
+
+function getHeadingConeLatLngs(lat, lon, headingDeg) {
+  var points = [[lat, lon]];
+  var halfAngle = HEADING_CONE_ANGLE_DEG / 2;
+  for (var i = 0; i <= HEADING_CONE_STEPS; i++) {
+    var t = i / HEADING_CONE_STEPS;
+    var b = headingDeg - halfAngle + (HEADING_CONE_ANGLE_DEG * t);
+    points.push(destinationPoint(lat, lon, b, HEADING_CONE_RANGE_M));
+  }
+  points.push([lat, lon]);
+  return points;
+}
+
+function updateHeadingCone() {
+  if (!map || currentLat === null || currentLon === null || currentHeading === null) {
+    if (headingCone && map) {
+      map.removeLayer(headingCone);
+      headingCone = null;
+    }
+    return;
+  }
+
+  var latlngs = getHeadingConeLatLngs(currentLat, currentLon, currentHeading);
+  if (!headingCone) {
+    headingCone = L.polygon(latlngs, {
+      color: "#4fc3f7",
+      weight: 1,
+      opacity: 0.9,
+      fillColor: "#4fc3f7",
+      fillOpacity: 0.2,
+      interactive: false
+    }).addTo(map);
+  } else {
+    headingCone.setLatLngs(latlngs);
+  }
 }
 
 // ── Recording and path persistence ───────────────────────────────────────────
@@ -698,6 +758,9 @@ function update() {
         st.className   = "value fix";
         currentLat = d.lat;
         currentLon = d.lon;
+        if (d.heading_valid) {
+          currentHeading = ((d.heading % 360) + 360) % 360;
+        }
         if (map) {
           if (marker) {
             marker.setLatLng([d.lat, d.lon]);
@@ -705,17 +768,24 @@ function update() {
             marker = L.marker([d.lat, d.lon]).addTo(map);
             map.setView([d.lat, d.lon], 17);
           }
+          updateHeadingCone();
         }
         addRecordPoint(d.lat, d.lon);
         updateNavigation();
       } else {
         st.textContent = "No fix (waiting for GPS)";
         st.className   = "value no-fix";
+        currentHeading = null;
+        updateHeadingCone();
       }
 
       document.getElementById("sats").textContent  = d.sats_valid ? d.sats + " sats"             : "0 sats";
       document.getElementById("speed").textContent = d.spd_valid  ? d.spd.toFixed(1)  + " km/h" : "-";
       document.getElementById("heading").textContent = d.heading_valid ? headingLabel(d.heading) : "-";
+      if (!d.heading_valid) {
+        currentHeading = null;
+        updateHeadingCone();
+      }
     })
     .catch(function (err) {
       var conn = document.getElementById("conn");
