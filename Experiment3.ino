@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Wire.h>
+#include <qmc5883p.h>
 
 const char* WIFI_SSID     = "Gringo Burru";
 const char* WIFI_PASSWORD = "Campina1";
@@ -19,12 +20,10 @@ static const uint32_t GPS_BAUD = 9600;
 static const int I2C_SDA_PIN = 9;
 static const int I2C_SCL_PIN = 8;
 
-static const uint8_t HMC5883_ADDR = 0x1E;
-static const uint8_t QMC5883_ADDR = 0x0D;
-
 TinyGPSPlus gps;
 HardwareSerial gpsSerial(1);
 WebServer server(80);
+QMC5883P mag;
 
 double prevLat = 0, prevLon = 0;
 bool   hasPrev = false;
@@ -35,121 +34,20 @@ unsigned long lastHeadingRead = 0;
 bool  headingValid = false;
 float headingDeg   = 0.0f;
 
-enum MagType {
-  MAG_NONE,
-  MAG_HMC5883,
-  MAG_QMC5883
-};
-
-MagType magType = MAG_NONE;
-
-bool writeMagRegister(uint8_t addr, uint8_t reg, uint8_t value) {
-  Wire.beginTransmission(addr);
-  Wire.write(reg);
-  Wire.write(value);
-  return Wire.endTransmission() == 0;
-}
-
-bool initHMC5883() {
-  // Config A: 8-sample average, 15 Hz output rate, normal measurement
-  if (!writeMagRegister(HMC5883_ADDR, 0x00, 0x70)) return false;
-  // Config B: gain setting (default, +/-1.3 Ga)
-  if (!writeMagRegister(HMC5883_ADDR, 0x01, 0x20)) return false;
-  // Mode: continuous measurement
-  if (!writeMagRegister(HMC5883_ADDR, 0x02, 0x00)) return false;
-  return true;
-}
-
-bool initQMC5883() {
-  // Soft reset
-  if (!writeMagRegister(QMC5883_ADDR, 0x0A, 0x80)) return false;
-  delay(10);
-  // Continuous mode, ODR=200Hz, RNG=8G, OSR=512
-  if (!writeMagRegister(QMC5883_ADDR, 0x09, 0x1D)) return false;
-  // Set/Reset period recommended value
-  if (!writeMagRegister(QMC5883_ADDR, 0x0B, 0x01)) return false;
-  return true;
-}
-
-bool readHeadingHMC5883(float& outHeadingDeg) {
-  Wire.beginTransmission(HMC5883_ADDR);
-  Wire.write(0x03); // X_MSB register
-  if (Wire.endTransmission(false) != 0) {
-    return false;
-  }
-
-  int readCount = Wire.requestFrom((int)HMC5883_ADDR, 6);
-  if (readCount != 6) {
-    return false;
-  }
-
-  int16_t x = (int16_t)((Wire.read() << 8) | Wire.read());
-  int16_t z = (int16_t)((Wire.read() << 8) | Wire.read());
-  int16_t y = (int16_t)((Wire.read() << 8) | Wire.read());
-  (void)z;
-
-  if (x == 0 && y == 0) {
-    return false;
-  }
-
-  float heading = atan2((float)y, (float)x) * 180.0f / PI;
-  if (heading < 0.0f) {
-    heading += 360.0f;
-  }
-  outHeadingDeg = heading;
-  return true;
-}
-
-bool readHeadingQMC5883(float& outHeadingDeg) {
-  Wire.beginTransmission(QMC5883_ADDR);
-  Wire.write(0x00); // X_LSB register
-  if (Wire.endTransmission(false) != 0) {
-    return false;
-  }
-
-  int readCount = Wire.requestFrom((int)QMC5883_ADDR, 6);
-  if (readCount != 6) {
-    return false;
-  }
-
-  int16_t x = (int16_t)(Wire.read() | (Wire.read() << 8));
-  int16_t y = (int16_t)(Wire.read() | (Wire.read() << 8));
-  int16_t z = (int16_t)(Wire.read() | (Wire.read() << 8));
-  (void)z;
-
-  if (x == 0 && y == 0) {
-    return false;
-  }
-
-  float heading = atan2((float)y, (float)x) * 180.0f / PI;
-  if (heading < 0.0f) {
-    heading += 360.0f;
-  }
-  outHeadingDeg = heading;
-  return true;
-}
-
-bool initMagnetometer() {
-  if (initHMC5883()) {
-    magType = MAG_HMC5883;
-    return true;
-  }
-  if (initQMC5883()) {
-    magType = MAG_QMC5883;
-    return true;
-  }
-  magType = MAG_NONE;
-  return false;
-}
-
 bool readHeading(float& outHeadingDeg) {
-  if (magType == MAG_HMC5883) {
-    return readHeadingHMC5883(outHeadingDeg);
-  }
-  if (magType == MAG_QMC5883) {
-    return readHeadingQMC5883(outHeadingDeg);
-  }
-  return false;
+  float xyz[3];
+  if (!mag.readXYZ(xyz)) return false;
+
+  // Skip calibration for now as requested.
+  float x = xyz[0];
+  float y = xyz[1];
+
+  if (x == 0.0f && y == 0.0f) return false;
+
+  float heading = atan2(y, x) * 180.0f / PI;
+  if (heading < 0.0f) heading += 360.0f;
+  outHeadingDeg = heading;
+  return true;
 }
 
 // Minimal bootstrap page — CSS and JS are loaded from GitHub Pages (HTTPS is
@@ -239,14 +137,11 @@ void setup() {
   delay(100);
 
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-  if (initMagnetometer()) {
-    if (magType == MAG_HMC5883) {
-      Serial.println("Magnetometer: HMC5883 initialized on SDA=9, SCL=8");
-    } else if (magType == MAG_QMC5883) {
-      Serial.println("Magnetometer: QMC5883 initialized on SDA=9, SCL=8");
-    }
+  Wire.setClock(100000);
+  if (mag.begin()) {
+    Serial.println("Magnetometer initialized (QMC5883P path) on SDA=9, SCL=8");
   } else {
-    Serial.println("Warning: magnetometer init failed (HMC/QMC).");
+    Serial.println("Warning: magnetometer init failed.");
   }
 
   // ── WiFi first, nothing else ──────────────────────────────────────────────
@@ -296,9 +191,7 @@ void loop() {
     lastHeadingRead = millis();
     float h = 0.0f;
     headingValid = readHeading(h);
-    if (headingValid) {
-      headingDeg = h;
-    }
+    if (headingValid) headingDeg = h;
   }
 
   if (millis() - lastCalc >= 1000) {

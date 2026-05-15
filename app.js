@@ -794,14 +794,14 @@ function update() {
     });
 }
 
-// Start immediately, then every second
+// Start immediately, then every 200 ms for smoother heading updates
 loadRecordings();
 loadSavedRoutes();
 refreshRouteDropdown("");
 loadGitHubRoutes();
 updateRecordButton();
 update();
-setInterval(update, 1000);
+setInterval(update, 200);
 if (document.readyState === "complete") {
   initMap();
 } else {
