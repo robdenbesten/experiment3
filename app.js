@@ -140,11 +140,7 @@ function getHeadingConeLatLngs(lat, lon, headingDeg) {
 function updateHeadingCone() {
   if (!map || currentLat === null || currentLon === null || currentHeading === null) {
     if (headingCone && map) {
-      if (Array.isArray(headingCone)) {
-        headingCone.forEach(function(layer) { map.removeLayer(layer); });
-      } else {
-        map.removeLayer(headingCone);
-      }
+      map.removeLayer(headingCone);
       headingCone = null;
     }
     return;
@@ -152,26 +148,18 @@ function updateHeadingCone() {
 
   var latlngs = getHeadingConeLatLngs(currentLat, currentLon, currentHeading);
   if (!headingCone) {
-    // Create layered gradient: multiple polygons from 50% to 100% opacity
-    headingCone = [];
-    var steps = 5;
-    for (var i = 0; i < steps; i++) {
-      var opacity = 0.5 + (0.5 * i / (steps - 1)); // 0.5 to 1.0
-      var polygon = L.polygon(latlngs, {
-        color: "transparent",
-        weight: 0,
-        opacity: 0,
-        fillColor: "#4fc3f7",
-        fillOpacity: opacity * 0.8, // Cap at 0.8 for visibility
-        interactive: false
-      }).addTo(map);
-      polygon.bringToBack();
-      headingCone.push(polygon);
-    }
+    headingCone = L.polygon(latlngs, {
+      color: "transparent",
+      weight: 0,
+      opacity: 0,
+      fillColor: "#4fc3f7",
+      fillOpacity: 0.75,
+      interactive: false
+    }).addTo(map);
+    headingCone.bringToBack();
   } else {
-    headingCone.forEach(function(polygon) {
-      polygon.setLatLngs(latlngs);
-    });
+    headingCone.setLatLngs(latlngs);
+    headingCone.bringToBack();
   }
 }
 
