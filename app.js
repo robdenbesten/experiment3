@@ -50,8 +50,6 @@ var recordings      = [];
 var recordingStartedAt = null;
 
 var RECORDINGS_STORAGE_KEY = "gps_recordings_v1";
-var RECORD_MIN_STEP_M      = 3;
-var RECORD_MAX_POINTS      = 5000;
 
 // ── Navigation helpers ────────────────────────────────────────────────────────
 function toRad(deg) { return deg * Math.PI / 180; }
@@ -133,21 +131,7 @@ function updateRecordLine() {
 
 function addRecordPoint(lat, lon) {
   if (!recording) return;
-
-  if (!recordingPoints.length) {
-    recordingPoints.push([lat, lon]);
-    updateRecordLine();
-    return;
-  }
-
-  var last = recordingPoints[recordingPoints.length - 1];
-  var moved = haversineM(last[0], last[1], lat, lon);
-  if (moved < RECORD_MIN_STEP_M) return;
-
   recordingPoints.push([lat, lon]);
-  if (recordingPoints.length > RECORD_MAX_POINTS) {
-    recordingPoints.shift();
-  }
   updateRecordLine();
 }
 
