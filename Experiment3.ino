@@ -1,4 +1,4 @@
-﻿#include <HardwareSerial.h>
+#include <HardwareSerial.h>
 #include <TinyGPSPlus.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -33,6 +33,7 @@ unsigned long lastHeadingRead = 0;
 
 bool  headingValid = false;
 float headingDeg   = 0.0f;
+bool  magReady = false;
 
 bool readHeading(float& outHeadingDeg) {
   float xyz[3];
@@ -138,10 +139,11 @@ void setup() {
 
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   Wire.setClock(100000);
-  if (mag.begin()) {
+  magReady = mag.begin();
+  if (magReady) {
     Serial.println("Magnetometer initialized (QMC5883P path) on SDA=9, SCL=8");
   } else {
-    Serial.println("Warning: magnetometer init failed.");
+    Serial.println("Warning: magnetometer init failed. Heading updates disabled.");
   }
 
   // ── WiFi first, nothing else ──────────────────────────────────────────────
@@ -189,9 +191,13 @@ void loop() {
 
   if (millis() - lastHeadingRead >= 100) {
     lastHeadingRead = millis();
-    float h = 0.0f;
-    headingValid = readHeading(h);
-    if (headingValid) headingDeg = h;
+    if (magReady) {
+      float h = 0.0f;
+      headingValid = readHeading(h);
+      if (headingValid) headingDeg = h;
+    } else {
+      headingValid = false;
+    }
   }
 
   if (millis() - lastCalc >= 1000) {
