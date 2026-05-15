@@ -2,6 +2,7 @@
 #include <TinyGPSPlus.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <Wire.h>
 
 const char* WIFI_SSID     = "Gringo Burru";
 const char* WIFI_PASSWORD = "Campina1";
@@ -15,6 +16,10 @@ IPAddress FIXED_SUBNET(255, 255, 255, 0);
 static const int RX_PIN = 44;
 static const int TX_PIN = 43;
 static const uint32_t GPS_BAUD = 9600;
+static const int I2C_SDA_PIN = 9;
+static const int I2C_SCL_PIN = 8;
+
+static const uint8_t HMC5883_ADDR = 0x1E;
 
 TinyGPSPlus gps;
 HardwareSerial gpsSerial(1);
@@ -24,6 +29,56 @@ double prevLat = 0, prevLon = 0;
 bool   hasPrev = false;
 double lastDist = 0;
 unsigned long lastCalc = 0;
+unsigned long lastHeadingRead = 0;
+
+bool  headingValid = false;
+float headingDeg   = 0.0f;
+
+bool writeMagRegister(uint8_t reg, uint8_t value) {
+  Wire.beginTransmission(HMC5883_ADDR);
+  Wire.write(reg);
+  Wire.write(value);
+  return Wire.endTransmission() == 0;
+}
+
+bool initMagnetometer() {
+  // Config A: 8-sample average, 15 Hz output rate, normal measurement
+  if (!writeMagRegister(0x00, 0x70)) return false;
+  // Config B: gain setting (default, +/-1.3 Ga)
+  if (!writeMagRegister(0x01, 0x20)) return false;
+  // Mode: continuous measurement
+  if (!writeMagRegister(0x02, 0x00)) return false;
+  return true;
+}
+
+bool readHeading(float& outHeadingDeg) {
+  Wire.beginTransmission(HMC5883_ADDR);
+  Wire.write(0x03); // X_MSB register
+  if (Wire.endTransmission(false) != 0) {
+    return false;
+  }
+
+  int readCount = Wire.requestFrom((int)HMC5883_ADDR, 6);
+  if (readCount != 6) {
+    return false;
+  }
+
+  int16_t x = (int16_t)((Wire.read() << 8) | Wire.read());
+  int16_t z = (int16_t)((Wire.read() << 8) | Wire.read());
+  int16_t y = (int16_t)((Wire.read() << 8) | Wire.read());
+  (void)z;
+
+  if (x == 0 && y == 0) {
+    return false;
+  }
+
+  float heading = atan2((float)y, (float)x) * 180.0f / PI;
+  if (heading < 0.0f) {
+    heading += 360.0f;
+  }
+  outHeadingDeg = heading;
+  return true;
+}
 
 // Minimal bootstrap page — CSS and JS are loaded from GitHub Pages (HTTPS is
 // fine for an HTTP page). app.js uses window.location.hostname to reach back
@@ -82,12 +137,13 @@ void handleOptions() {
 }
 
 void handleData() {
-  char json[256];
+  char json[320];
   snprintf(json, sizeof(json),
     "{\"fix\":%s,\"lat\":%.6f,\"lon\":%.6f,\"dist\":%.2f,"
     "\"alt_valid\":%s,\"alt\":%.1f,"
     "\"sats_valid\":%s,\"sats\":%d,"
-    "\"spd_valid\":%s,\"spd\":%.2f}",
+    "\"spd_valid\":%s,\"spd\":%.2f,"
+    "\"heading_valid\":%s,\"heading\":%.1f}",
     gps.location.isValid()   ? "true" : "false",
     gps.location.isValid()   ? gps.location.lat()         : 0.0,
     gps.location.isValid()   ? gps.location.lng()         : 0.0,
@@ -97,7 +153,9 @@ void handleData() {
     gps.satellites.isValid() ? "true" : "false",
     gps.satellites.isValid() ? (int)gps.satellites.value(): 0,
     gps.speed.isValid()      ? "true" : "false",
-    gps.speed.isValid()      ? gps.speed.kmph()           : 0.0
+    gps.speed.isValid()      ? gps.speed.kmph()           : 0.0,
+    headingValid             ? "true" : "false",
+    headingValid             ? headingDeg                 : 0.0
   );
   server.sendHeader("Access-Control-Allow-Origin",          "*");
   server.sendHeader("Access-Control-Allow-Private-Network", "true");
@@ -107,6 +165,13 @@ void handleData() {
 void setup() {
   Serial.begin(115200);
   delay(100);
+
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  if (initMagnetometer()) {
+    Serial.println("HMC5883 initialized on SDA=9, SCL=8");
+  } else {
+    Serial.println("Warning: HMC5883 init failed.");
+  }
 
   // ── WiFi first, nothing else ──────────────────────────────────────────────
   WiFi.persistent(false);   // don't read/write flash; prevents state corruption
@@ -149,6 +214,15 @@ void loop() {
 
   while (gpsSerial.available()) {
     gps.encode(gpsSerial.read());
+  }
+
+  if (millis() - lastHeadingRead >= 100) {
+    lastHeadingRead = millis();
+    float h = 0.0f;
+    headingValid = readHeading(h);
+    if (headingValid) {
+      headingDeg = h;
+    }
   }
 
   if (millis() - lastCalc >= 1000) {

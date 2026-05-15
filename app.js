@@ -11,6 +11,7 @@ app.innerHTML = [
     card("",     "status",      "GPS Status",              "-"),
     card("",     "sats",        "Satellites",              "-"),
     card("",     "speed",       "Speed",                   "-"),
+    card("",     "heading",     "Compass heading",         "-"),
     card("full", "wp-info",     "Waypoint",                "No waypoints yet"),
     card("",     "target-dist", "Distance to waypoint",    "-"),
     card("",     "target-bear", "Direction to waypoint",   "-"),
@@ -91,6 +92,12 @@ function bearing(lat1, lon1, lat2, lon2) {
 function bearingLabel(deg) {
   var dirs = ["N","NNO","NO","ONO","O","OZO","ZO","ZZO","Z","ZZW","ZW","WZW","W","WNW","NW","NNW"];
   return dirs[Math.round(deg / 22.5) % 16] + " (" + Math.round(deg) + "\u00b0)";
+}
+
+function headingLabel(deg) {
+  if (typeof deg !== "number" || !isFinite(deg)) return "-";
+  var normalized = ((deg % 360) + 360) % 360;
+  return bearingLabel(normalized);
 }
 
 // ── Recording and path persistence ───────────────────────────────────────────
@@ -708,6 +715,7 @@ function update() {
 
       document.getElementById("sats").textContent  = d.sats_valid ? d.sats + " sats"             : "0 sats";
       document.getElementById("speed").textContent = d.spd_valid  ? d.spd.toFixed(1)  + " km/h" : "-";
+      document.getElementById("heading").textContent = d.heading_valid ? headingLabel(d.heading) : "-";
     })
     .catch(function (err) {
       var conn = document.getElementById("conn");
