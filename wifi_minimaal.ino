@@ -1,4 +1,4 @@
-﻿#include <HardwareSerial.h>
+#include <HardwareSerial.h>
 #include <TinyGPSPlus.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -6,10 +6,8 @@
 #include <Wire.h>
 #include <qmc5883p.h>
 
-const char* WIFI_SSID     = "Gringo Burru";
-const char* WIFI_PASSWORD = "Campina1";
-
-// Stable local hostname so you can open the tracker without checking IP.
+const char* WIFI_SSID     = "gringoburru";
+const char* WIFI_PASSWORD = "campina1";
 const char* DEVICE_HOSTNAME = "esp32tracker";
 
 static const int RX_PIN = 44;
@@ -36,37 +34,29 @@ bool  magReady = false;
 bool readHeading(float& outHeadingDeg) {
   float xyz[3];
   if (!mag.readXYZ(xyz)) return false;
-
-  // Skip calibration for now as requested.
   float x = xyz[0];
   float y = xyz[1];
-
   if (x == 0.0f && y == 0.0f) return false;
-
   float heading = atan2(y, x) * 180.0f / PI;
   if (heading < 0.0f) heading += 360.0f;
   outHeadingDeg = heading;
   return true;
 }
 
-// Minimal bootstrap page — CSS and JS are loaded from GitHub Pages (HTTPS is
-// fine for an HTTP page). app.js uses window.location.hostname to reach back
-// to this ESP32, so no IP needs to be hardcoded anywhere.
 const char ROOT_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
-<html lang="en">
+<html lang=\"en\">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset=\"utf-8\">
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
   <title>GPS Tracker</title>
 </head>
 <body>
-  <div id="app"><p style="font-family:sans-serif;color:#eee;background:#1a1a2e;margin:0;padding:16px">Loading...</p></div>
+  <div id=\"app\"><p style=\"font-family:sans-serif;color:#eee;background:#1a1a2e;margin:0;padding:16px\">Loading...</p></div>
   <script>
   (function () {
     var BASE = 'https://robdenbesten.github.io/experiment3/';
     var bust = Date.now();
-
     function injectCSS(css) {
       var el = document.createElement('style');
       el.textContent = css;
@@ -77,8 +67,6 @@ const char ROOT_HTML[] PROGMEM = R"rawliteral(
       el.textContent = js;
       document.head.appendChild(el);
     }
-
-    // Always fetch latest files; no localStorage cache to avoid stale app code.
     fetch(BASE + 'style.css?v=' + bust)
       .then(function (r) { return r.text(); })
       .then(function (t) { injectCSS(t); })
@@ -144,12 +132,11 @@ void setup() {
     Serial.println("Warning: magnetometer init failed. Heading updates disabled.");
   }
 
-  // ── WiFi first, nothing else ──────────────────────────────────────────────
-  WiFi.persistent(false);   // don't read/write flash; prevents state corruption
+  WiFi.persistent(false);
   WiFi.setAutoReconnect(true);
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(DEVICE_HOSTNAME);
-  delay(100);               // let radio settle after mode switch
+  delay(100);
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting");
@@ -175,22 +162,18 @@ void setup() {
   server.begin();
   Serial.println("Ready.");
 
-  // ── GPS serial after WiFi is up ───────────────────────────────────────────
   gpsSerial.begin(GPS_BAUD, SERIAL_8N1, RX_PIN, TX_PIN);
 }
 
 void loop() {
   if (WiFi.status() != WL_CONNECTED) {
-    delay(500);  // setAutoReconnect handles it; just wait
+    delay(500);
     return;
   }
-
   server.handleClient();
-
   while (gpsSerial.available()) {
     gps.encode(gpsSerial.read());
   }
-
   if (millis() - lastHeadingRead >= 100) {
     lastHeadingRead = millis();
     if (magReady) {
@@ -201,7 +184,6 @@ void loop() {
       headingValid = false;
     }
   }
-
   if (millis() - lastCalc >= 1000) {
     lastCalc = millis();
     if (gps.location.isValid()) {
