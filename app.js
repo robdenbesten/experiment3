@@ -2,11 +2,6 @@
 // is always the ESP32's IP. No hardcoded address needed.
 var DATA_URL = "http://" + window.location.hostname + "/data";
 
-// ── Add D3.js ────────────────────────────────────────────────────────────────
-var d3Script = document.createElement("script");
-d3Script.src = "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js";
-document.head.appendChild(d3Script);
-
 // ── Build DOM ─────────────────────────────────────────────────────────────────
 var app = document.getElementById("app");
 app.innerHTML = [
@@ -46,6 +41,7 @@ app.innerHTML = [
   '</div>',
   '<div id="map"></div>'
 ].join("");
+
 // ── Magnetometer Calibration ────────────────────────────────────────────────
 var calibrating = false;
 var calibStatus = document.getElementById("calib-status");
@@ -80,27 +76,29 @@ function card(extra, id, label, init) {
 
 var map            = null;
 var marker         = null;   // current position marker (blue)
-var markerAnim     = null;   // d3 timer for marker animation
-var coneAnim       = null;   // d3 timer for cone animation
-var lastMarkerPos  = null;   // [lat, lon]
-var lastConeState  = null;   // {lat, lon, heading}
 var waypoints      = [];     // [{lat, lon}, ...]
 var wpMarkers      = [];     // Leaflet markers per waypoint
 var routeLine      = null;   // polyline through all waypoints
 var navLine        = null;   // dashed line: position → current waypoint
 var currentWPIndex = 0;      // which waypoint we're navigating to
+
+// Location & Animation Variables
 var currentLat     = null;
 var currentLon     = null;
 var currentHeading = null;
+var targetLat      = null;
+var targetLon      = null;
+var targetHeading  = null;
+
 var lastTargetDist = null;
 var recording      = false;
 var recordingPoints = [];
-var recordingLine   = null;
-var recordings      = [];
+var recordingLine  = null;
+var recordings     = [];
 var recordingStartedAt = null;
-var localRoutes     = [];
-var githubRoutes    = [];
-var loadingRoute    = false;
+var localRoutes    = [];
+var githubRoutes   = [];
+var loadingRoute   = false;
 
 var RECORDINGS_STORAGE_KEY = "gps_recordings_v1";
 var LOCAL_ROUTES_STORAGE_KEY = "gps_saved_routes_v1";
@@ -109,6 +107,39 @@ var headingCone = null;
 var HEADING_CONE_ANGLE_DEG = 55;
 var HEADING_CONE_RANGE_M   = 22;
 var HEADING_CONE_STEPS     = 12;
+
+// ── Animation Loop ────────────────────────────────────────────────────────────
+function animateMapElements() {
+  if (currentLat !== null && targetLat !== null) {
+    // 0.2 is the smoothing factor. Adjust between 0.05 (slower) and 0.5 (faster) if needed.
+    var smoothing = 0.2; 
+    
+    currentLat += (targetLat - currentLat) * smoothing;
+    currentLon += (targetLon - currentLon) * smoothing;
+
+    // Shortest path interpolation for the heading
+    if (currentHeading !== null && targetHeading !== null) {
+      var diff = targetHeading - currentHeading;
+      // Normalize difference to -180 to +180 degrees
+      diff = ((diff + 540) % 360) - 180; 
+      currentHeading += diff * smoothing;
+      // Keep it within 0-360
+      currentHeading = (currentHeading + 360) % 360; 
+    } else if (targetHeading !== null) {
+      currentHeading = targetHeading;
+    }
+
+    // Update the Leaflet elements smoothly on screen
+    if (marker) {
+      marker.setLatLng([currentLat, currentLon]);
+    }
+    
+    updateHeadingCone();
+  }
+
+  requestAnimationFrame(animateMapElements);
+}
+requestAnimationFrame(animateMapElements);
 
 // ── Navigation helpers ────────────────────────────────────────────────────────
 function toRad(deg) { return deg * Math.PI / 180; }
@@ -180,41 +211,24 @@ function updateHeadingCone() {
       map.removeLayer(headingCone);
       headingCone = null;
     }
-    if (coneAnim) { coneAnim.stop(); coneAnim = null; }
-    lastConeState = null;
     return;
   }
 
-  var startState = lastConeState || {lat: currentLat, lon: currentLon, heading: currentHeading};
-  var endState = {lat: currentLat, lon: currentLon, heading: currentHeading};
-  var duration = 350;
-  if (coneAnim) coneAnim.stop();
-  coneAnim = d3.timer(function(elapsed) {
-    var t = Math.min(1, elapsed / duration);
-    var lat = startState.lat + (endState.lat - startState.lat) * t;
-    var lon = startState.lon + (endState.lon - startState.lon) * t;
-    var heading = startState.heading + (endState.heading - startState.heading) * t;
-    var latlngs = getHeadingConeLatLngs(lat, lon, heading);
-    if (!headingCone) {
-      headingCone = L.polygon(latlngs, {
-        color: "transparent",
-        weight: 0,
-        opacity: 0,
-        fillColor: "#4fc3f7",
-        fillOpacity: 0.75,
-        interactive: false
-      }).addTo(map);
-      headingCone.bringToBack();
-    } else {
-      headingCone.setLatLngs(latlngs);
-      headingCone.bringToBack();
-    }
-    if (t === 1) {
-      lastConeState = endState;
-      coneAnim.stop();
-      coneAnim = null;
-    }
-  });
+  var latlngs = getHeadingConeLatLngs(currentLat, currentLon, currentHeading);
+  if (!headingCone) {
+    headingCone = L.polygon(latlngs, {
+      color: "transparent",
+      weight: 0,
+      opacity: 0,
+      fillColor: "#4fc3f7",
+      fillOpacity: 0.75,
+      interactive: false
+    }).addTo(map);
+    headingCone.bringToBack();
+  } else {
+    headingCone.setLatLngs(latlngs);
+    headingCone.bringToBack();
+  }
 }
 
 // ── Recording and path persistence ───────────────────────────────────────────
@@ -788,8 +802,6 @@ function initMap() {
     if (recording && recordingPoints.length > 1) {
       updateRecordLine();
     }
-
-    // No tap handler needed — target is set from map center via confirm button
   };
   js.onerror = function () {
     mapDiv.textContent = "Map unavailable (no internet)";
@@ -813,31 +825,24 @@ function update() {
       if (d.fix) {
         st.textContent = "Fix acquired";
         st.className   = "value fix";
-        // Animate marker movement
-        var newPos = [d.lat, d.lon];
-        if (!marker) {
-          marker = L.marker(newPos).addTo(map);
-          map.setView(newPos, 17);
-          lastMarkerPos = newPos;
-        } else {
-          if (markerAnim) markerAnim.stop();
-          var start = lastMarkerPos || newPos;
-          var end = newPos;
-          var duration = 350;
-          markerAnim = d3.timer(function(elapsed) {
-            var t = Math.min(1, elapsed / duration);
-            var lat = start[0] + (end[0] - start[0]) * t;
-            var lon = start[1] + (end[1] - start[1]) * t;
-            marker.setLatLng([lat, lon]);
-            if (t === 1) {
-              lastMarkerPos = end;
-              markerAnim.stop();
-              markerAnim = null;
-            }
-          });
+        
+        // Update Target values instead of direct assignment
+        targetLat = d.lat;
+        targetLon = d.lon;
+
+        // Snap immediately if this is the very first time we get a fix
+        if (currentLat === null) {
+          currentLat = targetLat;
+          currentLon = targetLon;
         }
-        currentLat = d.lat;
-        currentLon = d.lon;
+
+        if (map) {
+          if (!marker) {
+            marker = L.marker([currentLat, currentLon]).addTo(map);
+            map.setView([currentLat, currentLon], 17);
+          }
+        }
+        
         addRecordPoint(d.lat, d.lon);
         updateNavigation();
       } else {
@@ -845,15 +850,17 @@ function update() {
         st.className   = "value no-fix";
       }
 
-      // Update heading value and viewing cone
+      // Update heading target
       if (typeof d.heading !== "undefined" && !isNaN(d.heading)) {
         document.getElementById("heading").textContent = d.heading;
-        currentHeading = d.heading;
+        targetHeading = d.heading;
+
+        // Snap immediately on first heading
+        if (currentHeading === null) currentHeading = targetHeading;
       } else {
         document.getElementById("heading").textContent = "-";
-        currentHeading = null;
+        targetHeading = null;
       }
-      updateHeadingCone();
 
       document.getElementById("sats").textContent  = d.sats_valid ? d.sats + " sats"             : "0 sats";
       document.getElementById("speed").textContent = d.spd_valid  ? d.spd.toFixed(1)  + " km/h" : "-";
@@ -878,4 +885,3 @@ if (document.readyState === "complete") {
 } else {
   window.addEventListener("load", initMap);
 }
-
