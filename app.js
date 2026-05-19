@@ -804,15 +804,12 @@ function update() {
         st.className   = "value no-fix";
       }
 
-      // Always update heading card, regardless of GPS fix
-      if (d.heading_valid) {
-        currentHeading = ((d.heading % 360) + 360) % 360;
-        document.getElementById("heading").textContent = headingLabel(d.heading);
+      // SIMPLIFIED: Always show heading value as received, no formatting
+      if (typeof d.heading !== "undefined" && !isNaN(d.heading)) {
+        document.getElementById("heading").textContent = d.heading;
       } else {
-        currentHeading = null;
         document.getElementById("heading").textContent = "-";
       }
-      updateHeadingCone();
 
       document.getElementById("sats").textContent  = d.sats_valid ? d.sats + " sats"             : "0 sats";
       document.getElementById("speed").textContent = d.spd_valid  ? d.spd.toFixed(1)  + " km/h" : "-";
