@@ -75,6 +75,8 @@ function card(extra, id, label, init) {
 
 var map            = null;
 var marker         = null;   // current position marker (blue)
+var markerAnim     = null;   // animation frame for marker
+var coneAnim       = null;   // animation frame for cone
 var waypoints      = [];     // [{lat, lon}, ...]
 var wpMarkers      = [];     // Leaflet markers per waypoint
 var routeLine      = null;   // polyline through all waypoints
@@ -165,7 +167,42 @@ function getHeadingConeLatLngs(lat, lon, headingDeg) {
   return points;
 }
 
-function updateHeadingCone() {
+function animateLatLng(from, to, duration, cb) {
+  var start = null;
+  function step(ts) {
+    if (!start) start = ts;
+    var t = Math.min(1, (ts - start) / duration);
+    var lat = from[0] + (to[0] - from[0]) * t;
+    var lon = from[1] + (to[1] - from[1]) * t;
+    cb([lat, lon], t);
+    if (t < 1) {
+      requestAnimationFrame(step);
+    }
+  }
+  requestAnimationFrame(step);
+}
+
+function animateCone(fromLat, fromLon, fromHeading, toLat, toLon, toHeading, duration) {
+  var start = null;
+  function step(ts) {
+    if (!start) start = ts;
+    var t = Math.min(1, (ts - start) / duration);
+    var lat = fromLat + (toLat - fromLat) * t;
+    var lon = fromLon + (toLon - fromLon) * t;
+    var heading = fromHeading + (toHeading - fromHeading) * t;
+    var latlngs = getHeadingConeLatLngs(lat, lon, heading);
+    if (headingCone) {
+      headingCone.setLatLngs(latlngs);
+      headingCone.bringToBack();
+    }
+    if (t < 1) {
+      coneAnim = requestAnimationFrame(step);
+    }
+  }
+  coneAnim = requestAnimationFrame(step);
+}
+
+function updateHeadingCone(animated) {
   if (!map || currentLat === null || currentLon === null || currentHeading === null) {
     if (headingCone && map) {
       map.removeLayer(headingCone);
@@ -173,7 +210,6 @@ function updateHeadingCone() {
     }
     return;
   }
-
   var latlngs = getHeadingConeLatLngs(currentLat, currentLon, currentHeading);
   if (!headingCone) {
     headingCone = L.polygon(latlngs, {
@@ -185,6 +221,18 @@ function updateHeadingCone() {
       interactive: false
     }).addTo(map);
     headingCone.bringToBack();
+  } else if (animated && headingCone._latlngs && headingCone._latlngs.length > 1) {
+    var prev = headingCone._latlngs[0][0];
+    var prevLat = prev.lat, prevLon = prev.lng;
+    var prevHeading = currentHeading; // fallback if not available
+    // Try to estimate previous heading from previous cone points
+    if (headingCone._latlngs[0].length > 2) {
+      var p0 = headingCone._latlngs[0][0];
+      var p1 = headingCone._latlngs[0][1];
+      prevHeading = Math.atan2(p1.lat - p0.lat, p1.lng - p0.lng) * 180 / Math.PI;
+    }
+    if (coneAnim) cancelAnimationFrame(coneAnim);
+    animateCone(prevLat, prevLon, prevHeading, currentLat, currentLon, currentHeading, 350);
   } else {
     headingCone.setLatLngs(latlngs);
     headingCone.bringToBack();
@@ -787,11 +835,19 @@ function update() {
       if (d.fix) {
         st.textContent = "Fix acquired";
         st.className   = "value fix";
+        var prevLat = currentLat, prevLon = currentLon;
         currentLat = d.lat;
         currentLon = d.lon;
         if (map) {
           if (marker) {
-            marker.setLatLng([d.lat, d.lon]);
+            if (markerAnim) cancelAnimationFrame(markerAnim);
+            var from = [prevLat !== null ? prevLat : d.lat, prevLon !== null ? prevLon : d.lon];
+            var to = [d.lat, d.lon];
+            var duration = 350;
+            function moveMarkerStep(pos) {
+              marker.setLatLng(pos);
+            }
+            animateLatLng(from, to, duration, moveMarkerStep);
           } else {
             marker = L.marker([d.lat, d.lon]).addTo(map);
             map.setView([d.lat, d.lon], 17);
@@ -807,12 +863,14 @@ function update() {
       // Update heading value and viewing cone
       if (typeof d.heading !== "undefined" && !isNaN(d.heading)) {
         document.getElementById("heading").textContent = d.heading;
+        var prevHeading = currentHeading;
         currentHeading = d.heading;
+        updateHeadingCone(true);
       } else {
         document.getElementById("heading").textContent = "-";
         currentHeading = null;
+        updateHeadingCone();
       }
-      updateHeadingCone();
 
       document.getElementById("sats").textContent  = d.sats_valid ? d.sats + " sats"             : "0 sats";
       document.getElementById("speed").textContent = d.spd_valid  ? d.spd.toFixed(1)  + " km/h" : "-";

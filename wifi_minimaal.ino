@@ -253,7 +253,8 @@ void loop() {
     gps.encode(gpsSerial.read());
   }
 
-  if (millis() - lastHeadingRead >= 100) {
+  // Throttle heading updates to 2 Hz (every 500 ms)
+  if (millis() - lastHeadingRead >= 500) {
     lastHeadingRead = millis();
     if (magReady) {
       magReadSuccess = mag.readXYZ(lastMagXYZ);
