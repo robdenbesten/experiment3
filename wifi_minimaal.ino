@@ -1,3 +1,37 @@
+// Magnetometer calibration globals
+bool calibrating = false;
+unsigned long calibrationStart = 0;
+float magMin[3] = {10000, 10000, 10000};
+float magMax[3] = {-10000, -10000, -10000};
+
+void startCalibration() {
+  calibrating = true;
+  calibrationStart = millis();
+  for (int i = 0; i < 3; ++i) {
+    magMin[i] = 10000;
+    magMax[i] = -10000;
+  }
+}
+
+void updateCalibration(float* xyz) {
+  for (int i = 0; i < 3; ++i) {
+    if (xyz[i] < magMin[i]) magMin[i] = xyz[i];
+    if (xyz[i] > magMax[i]) magMax[i] = xyz[i];
+  }
+}
+
+void finishCalibration() {
+  calibrating = false;
+  Serial.println("Magnetometer calibration complete.");
+  Serial.print("Min: "); Serial.print(magMin[0]); Serial.print(", "); Serial.print(magMin[1]); Serial.print(", "); Serial.println(magMin[2]);
+  Serial.print("Max: "); Serial.print(magMax[0]); Serial.print(", "); Serial.print(magMax[1]); Serial.print(", "); Serial.println(magMax[2]);
+}
+
+
+// ...existing code...
+
+// Move handleCalibrate() below server declaration
+
 #define LED_PIN 21 // Change this if your onboard LED is on a different pin
 
 enum WifiLedStatus {
@@ -42,8 +76,16 @@ static const int I2C_SCL_PIN = 8;
 
 TinyGPSPlus gps;
 HardwareSerial gpsSerial(1);
+
 WebServer server(80);
 QMC5883P mag;
+
+void handleCalibrate() {
+  startCalibration();
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Private-Network", "true");
+  server.send(200, "application/json", "{\"status\":\"calibrating\"}");
+}
 
 double prevLat = 0, prevLon = 0;
 bool   hasPrev = false;
@@ -170,6 +212,7 @@ void setup() {
   server.on("/",     HTTP_GET,     handleRoot);
   server.on("/data", HTTP_GET,     handleData);
   server.on("/data", HTTP_OPTIONS, handleOptions);
+  server.on("/calibrate", HTTP_GET, handleCalibrate);
   server.begin();
   Serial.println("Ready.");
 
@@ -200,9 +243,20 @@ void loop() {
   if (millis() - lastHeadingRead >= 100) {
     lastHeadingRead = millis();
     if (magReady) {
-      float h = 0.0f;
-      headingValid = readHeading(h);
-      if (headingValid) headingDeg = h;
+      float xyz[3];
+      if (mag.readXYZ(xyz)) {
+        if (calibrating) {
+          updateCalibration(xyz);
+          if (millis() - calibrationStart >= 10000) {
+            finishCalibration();
+          }
+        }
+        float h = 0.0f;
+        headingValid = readHeading(h);
+        if (headingValid) headingDeg = h;
+      } else {
+        headingValid = false;
+      }
     } else {
       headingValid = false;
     }

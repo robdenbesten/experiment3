@@ -33,9 +33,38 @@ app.innerHTML = [
       '<button id="record-btn" onclick="toggleRecording()" aria-pressed="false">&#x25CF; Record</button>',
       '<button id="clear-btn" onclick="clearWaypoints()" aria-label="Clear waypoints">&#x2715;</button>',
     '</div>',
+    // Calibration button
+    '<div class="card full" style="text-align:center;margin-top:8px;">',
+      '<button id="calibrate-btn" style="padding:8px 18px;font-size:1em;">Calibrate Magnetometer</button>',
+      '<span id="calib-status" style="margin-left:12px;color:#ffd700;"></span>',
+    '</div>',
   '</div>',
   '<div id="map"></div>'
 ].join("");
+// ── Magnetometer Calibration ────────────────────────────────────────────────
+var calibrating = false;
+var calibStatus = document.getElementById("calib-status");
+var calibBtn = document.getElementById("calibrate-btn");
+if (calibBtn) {
+  calibBtn.addEventListener("click", function() {
+    if (calibrating) return;
+    calibrating = true;
+    calibBtn.disabled = true;
+    calibStatus.textContent = "Calibrating... Rotate device 360° for 10s";
+    fetch("/calibrate").then(function(r) {
+      setTimeout(function() {
+        calibrating = false;
+        calibBtn.disabled = false;
+        calibStatus.textContent = "Calibration complete!";
+        setTimeout(function() { calibStatus.textContent = ""; }, 3000);
+      }, 10500);
+    }).catch(function() {
+      calibrating = false;
+      calibBtn.disabled = false;
+      calibStatus.textContent = "Calibration failed";
+    });
+  });
+}
 
 function card(extra, id, label, init) {
   return '<div class="card ' + extra + '">' +
