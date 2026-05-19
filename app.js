@@ -2,6 +2,11 @@
 // is always the ESP32's IP. No hardcoded address needed.
 var DATA_URL = "http://" + window.location.hostname + "/data";
 
+// ── Add D3.js ────────────────────────────────────────────────────────────────
+var d3Script = document.createElement("script");
+d3Script.src = "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js";
+document.head.appendChild(d3Script);
+
 // ── Build DOM ─────────────────────────────────────────────────────────────────
 var app = document.getElementById("app");
 app.innerHTML = [
@@ -75,12 +80,10 @@ function card(extra, id, label, init) {
 
 var map            = null;
 var marker         = null;   // current position marker (blue)
-var markerAnim     = null;   // animation frame for marker
-var coneAnim       = null;   // animation frame for cone
-var markerAnimQueue = [];
-var coneAnimQueue = [];
-var markerIsAnimating = false;
-var coneIsAnimating = false;
+var markerAnim     = null;   // d3 timer for marker animation
+var coneAnim       = null;   // d3 timer for cone animation
+var lastMarkerPos  = null;   // [lat, lon]
+var lastConeState  = null;   // {lat, lon, heading}
 var waypoints      = [];     // [{lat, lon}, ...]
 var wpMarkers      = [];     // Leaflet markers per waypoint
 var routeLine      = null;   // polyline through all waypoints
@@ -171,108 +174,47 @@ function getHeadingConeLatLngs(lat, lon, headingDeg) {
   return points;
 }
 
-function animateLatLng(from, to, duration, cb, onDone) {
-  markerIsAnimating = true;
-  var start = null;
-  function step(ts) {
-    if (!start) start = ts;
-    var t = Math.min(1, (ts - start) / duration);
-    var lat = from[0] + (to[0] - from[0]) * t;
-    var lon = from[1] + (to[1] - from[1]) * t;
-    cb([lat, lon], t);
-    if (t < 1) {
-      markerAnim = requestAnimationFrame(step);
-    } else {
-      markerIsAnimating = false;
-      if (onDone) onDone();
-      if (markerAnimQueue.length > 0) {
-        var next = markerAnimQueue.shift();
-        animateLatLng(next.from, next.to, next.duration, next.cb, next.onDone);
-      }
-    }
-  }
-  markerAnim = requestAnimationFrame(step);
-}
-
-function animateCone(fromLat, fromLon, fromHeading, toLat, toLon, toHeading, duration, onDone) {
-  coneIsAnimating = true;
-  var start = null;
-  function step(ts) {
-    if (!start) start = ts;
-    var t = Math.min(1, (ts - start) / duration);
-    var lat = fromLat + (toLat - fromLat) * t;
-    var lon = fromLon + (toLon - fromLon) * t;
-    var heading = fromHeading + (toHeading - fromHeading) * t;
-    var latlngs = getHeadingConeLatLngs(lat, lon, heading);
-    if (headingCone) {
-      headingCone.setLatLngs(latlngs);
-      headingCone.bringToBack();
-    }
-    if (t < 1) {
-      coneAnim = requestAnimationFrame(step);
-    } else {
-      coneIsAnimating = false;
-      if (onDone) onDone();
-      if (coneAnimQueue.length > 0) {
-        var next = coneAnimQueue.shift();
-        animateCone(next.fromLat, next.fromLon, next.fromHeading, next.toLat, next.toLon, next.toHeading, next.duration, next.onDone);
-      }
-    }
-  }
-  coneAnim = requestAnimationFrame(step);
-}
-
-function updateHeadingCone(animated) {
+function updateHeadingCone() {
   if (!map || currentLat === null || currentLon === null || currentHeading === null) {
     if (headingCone && map) {
       map.removeLayer(headingCone);
       headingCone = null;
     }
+    if (coneAnim) { coneAnim.stop(); coneAnim = null; }
+    lastConeState = null;
     return;
   }
-  var latlngs = getHeadingConeLatLngs(currentLat, currentLon, currentHeading);
-  if (!headingCone) {
-    headingCone = L.polygon(latlngs, {
-      color: "transparent",
-      weight: 0,
-      opacity: 0,
-      fillColor: "#4fc3f7",
-      fillOpacity: 0.75,
-      interactive: false
-    }).addTo(map);
-    headingCone.bringToBack();
-  } else if (animated && headingCone._latlngs && headingCone._latlngs.length > 1) {
-    var prev = headingCone._latlngs[0][0];
-    var prevLat = prev.lat, prevLon = prev.lng;
-    var prevHeading = currentHeading; // fallback if not available
-    if (headingCone._latlngs[0].length > 2) {
-      var p0 = headingCone._latlngs[0][0];
-      var p1 = headingCone._latlngs[0][1];
-      prevHeading = Math.atan2(p1.lat - p0.lat, p1.lng - p0.lng) * 180 / Math.PI;
-    }
-    var animParams = {
-      fromLat: prevLat,
-      fromLon: prevLon,
-      fromHeading: prevHeading,
-      toLat: currentLat,
-      toLon: currentLon,
-      toHeading: currentHeading,
-      duration: 350,
-      onDone: null
-    };
-    if (coneIsAnimating) {
-      coneAnimQueue.push(animParams);
+
+  var startState = lastConeState || {lat: currentLat, lon: currentLon, heading: currentHeading};
+  var endState = {lat: currentLat, lon: currentLon, heading: currentHeading};
+  var duration = 350;
+  if (coneAnim) coneAnim.stop();
+  coneAnim = d3.timer(function(elapsed) {
+    var t = Math.min(1, elapsed / duration);
+    var lat = startState.lat + (endState.lat - startState.lat) * t;
+    var lon = startState.lon + (endState.lon - startState.lon) * t;
+    var heading = startState.heading + (endState.heading - startState.heading) * t;
+    var latlngs = getHeadingConeLatLngs(lat, lon, heading);
+    if (!headingCone) {
+      headingCone = L.polygon(latlngs, {
+        color: "transparent",
+        weight: 0,
+        opacity: 0,
+        fillColor: "#4fc3f7",
+        fillOpacity: 0.75,
+        interactive: false
+      }).addTo(map);
+      headingCone.bringToBack();
     } else {
-      if (coneAnim) cancelAnimationFrame(coneAnim);
-      animateCone(
-        animParams.fromLat, animParams.fromLon, animParams.fromHeading,
-        animParams.toLat, animParams.toLon, animParams.toHeading, animParams.duration, animParams.onDone
-      );
+      headingCone.setLatLngs(latlngs);
+      headingCone.bringToBack();
     }
-  } else {
-    headingCone.setLatLngs(latlngs);
-    headingCone.bringToBack();
-  }
+    if (t === 1) {
+      lastConeState = endState;
+      coneAnim.stop();
+      coneAnim = null;
+    }
+  });
 }
 
 // ── Recording and path persistence ───────────────────────────────────────────
@@ -871,29 +813,31 @@ function update() {
       if (d.fix) {
         st.textContent = "Fix acquired";
         st.className   = "value fix";
-        var prevLat = currentLat, prevLon = currentLon;
+        // Animate marker movement
+        var newPos = [d.lat, d.lon];
+        if (!marker) {
+          marker = L.marker(newPos).addTo(map);
+          map.setView(newPos, 17);
+          lastMarkerPos = newPos;
+        } else {
+          if (markerAnim) markerAnim.stop();
+          var start = lastMarkerPos || newPos;
+          var end = newPos;
+          var duration = 350;
+          markerAnim = d3.timer(function(elapsed) {
+            var t = Math.min(1, elapsed / duration);
+            var lat = start[0] + (end[0] - start[0]) * t;
+            var lon = start[1] + (end[1] - start[1]) * t;
+            marker.setLatLng([lat, lon]);
+            if (t === 1) {
+              lastMarkerPos = end;
+              markerAnim.stop();
+              markerAnim = null;
+            }
+          });
+        }
         currentLat = d.lat;
         currentLon = d.lon;
-        if (map) {
-          if (marker) {
-            var from = [prevLat !== null ? prevLat : d.lat, prevLon !== null ? prevLon : d.lon];
-            var to = [d.lat, d.lon];
-            var duration = 350;
-            function moveMarkerStep(pos) {
-              marker.setLatLng(pos);
-            }
-            var animParams = { from, to, duration, cb: moveMarkerStep, onDone: null };
-            if (markerIsAnimating) {
-              markerAnimQueue.push(animParams);
-            } else {
-              if (markerAnim) cancelAnimationFrame(markerAnim);
-              animateLatLng(from, to, duration, moveMarkerStep);
-            }
-          } else {
-            marker = L.marker([d.lat, d.lon]).addTo(map);
-            map.setView([d.lat, d.lon], 17);
-          }
-        }
         addRecordPoint(d.lat, d.lon);
         updateNavigation();
       } else {
@@ -904,14 +848,12 @@ function update() {
       // Update heading value and viewing cone
       if (typeof d.heading !== "undefined" && !isNaN(d.heading)) {
         document.getElementById("heading").textContent = d.heading;
-        var prevHeading = currentHeading;
         currentHeading = d.heading;
-        updateHeadingCone(true);
       } else {
         document.getElementById("heading").textContent = "-";
         currentHeading = null;
-        updateHeadingCone();
       }
+      updateHeadingCone();
 
       document.getElementById("sats").textContent  = d.sats_valid ? d.sats + " sats"             : "0 sats";
       document.getElementById("speed").textContent = d.spd_valid  ? d.spd.toFixed(1)  + " km/h" : "-";
