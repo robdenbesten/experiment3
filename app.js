@@ -804,12 +804,15 @@ function update() {
         st.className   = "value no-fix";
       }
 
-      // SIMPLIFIED: Always show heading value as received, no formatting
+      // Update heading value and viewing cone
       if (typeof d.heading !== "undefined" && !isNaN(d.heading)) {
         document.getElementById("heading").textContent = d.heading;
+        currentHeading = d.heading;
       } else {
         document.getElementById("heading").textContent = "-";
+        currentHeading = null;
       }
+      updateHeadingCone();
 
       document.getElementById("sats").textContent  = d.sats_valid ? d.sats + " sats"             : "0 sats";
       document.getElementById("speed").textContent = d.spd_valid  ? d.spd.toFixed(1)  + " km/h" : "-";
