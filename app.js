@@ -77,6 +77,10 @@ var map            = null;
 var marker         = null;   // current position marker (blue)
 var markerAnim     = null;   // animation frame for marker
 var coneAnim       = null;   // animation frame for cone
+var markerAnimQueue = [];
+var coneAnimQueue = [];
+var markerIsAnimating = false;
+var coneIsAnimating = false;
 var waypoints      = [];     // [{lat, lon}, ...]
 var wpMarkers      = [];     // Leaflet markers per waypoint
 var routeLine      = null;   // polyline through all waypoints
@@ -167,7 +171,8 @@ function getHeadingConeLatLngs(lat, lon, headingDeg) {
   return points;
 }
 
-function animateLatLng(from, to, duration, cb) {
+function animateLatLng(from, to, duration, cb, onDone) {
+  markerIsAnimating = true;
   var start = null;
   function step(ts) {
     if (!start) start = ts;
@@ -176,13 +181,21 @@ function animateLatLng(from, to, duration, cb) {
     var lon = from[1] + (to[1] - from[1]) * t;
     cb([lat, lon], t);
     if (t < 1) {
-      requestAnimationFrame(step);
+      markerAnim = requestAnimationFrame(step);
+    } else {
+      markerIsAnimating = false;
+      if (onDone) onDone();
+      if (markerAnimQueue.length > 0) {
+        var next = markerAnimQueue.shift();
+        animateLatLng(next.from, next.to, next.duration, next.cb, next.onDone);
+      }
     }
   }
-  requestAnimationFrame(step);
+  markerAnim = requestAnimationFrame(step);
 }
 
-function animateCone(fromLat, fromLon, fromHeading, toLat, toLon, toHeading, duration) {
+function animateCone(fromLat, fromLon, fromHeading, toLat, toLon, toHeading, duration, onDone) {
+  coneIsAnimating = true;
   var start = null;
   function step(ts) {
     if (!start) start = ts;
@@ -197,6 +210,13 @@ function animateCone(fromLat, fromLon, fromHeading, toLat, toLon, toHeading, dur
     }
     if (t < 1) {
       coneAnim = requestAnimationFrame(step);
+    } else {
+      coneIsAnimating = false;
+      if (onDone) onDone();
+      if (coneAnimQueue.length > 0) {
+        var next = coneAnimQueue.shift();
+        animateCone(next.fromLat, next.fromLon, next.fromHeading, next.toLat, next.toLon, next.toHeading, next.duration, next.onDone);
+      }
     }
   }
   coneAnim = requestAnimationFrame(step);
@@ -225,14 +245,30 @@ function updateHeadingCone(animated) {
     var prev = headingCone._latlngs[0][0];
     var prevLat = prev.lat, prevLon = prev.lng;
     var prevHeading = currentHeading; // fallback if not available
-    // Try to estimate previous heading from previous cone points
     if (headingCone._latlngs[0].length > 2) {
       var p0 = headingCone._latlngs[0][0];
       var p1 = headingCone._latlngs[0][1];
       prevHeading = Math.atan2(p1.lat - p0.lat, p1.lng - p0.lng) * 180 / Math.PI;
     }
-    if (coneAnim) cancelAnimationFrame(coneAnim);
-    animateCone(prevLat, prevLon, prevHeading, currentLat, currentLon, currentHeading, 350);
+    var animParams = {
+      fromLat: prevLat,
+      fromLon: prevLon,
+      fromHeading: prevHeading,
+      toLat: currentLat,
+      toLon: currentLon,
+      toHeading: currentHeading,
+      duration: 350,
+      onDone: null
+    };
+    if (coneIsAnimating) {
+      coneAnimQueue.push(animParams);
+    } else {
+      if (coneAnim) cancelAnimationFrame(coneAnim);
+      animateCone(
+        animParams.fromLat, animParams.fromLon, animParams.fromHeading,
+        animParams.toLat, animParams.toLon, animParams.toHeading, animParams.duration, animParams.onDone
+      );
+    }
   } else {
     headingCone.setLatLngs(latlngs);
     headingCone.bringToBack();
@@ -840,14 +876,19 @@ function update() {
         currentLon = d.lon;
         if (map) {
           if (marker) {
-            if (markerAnim) cancelAnimationFrame(markerAnim);
             var from = [prevLat !== null ? prevLat : d.lat, prevLon !== null ? prevLon : d.lon];
             var to = [d.lat, d.lon];
             var duration = 350;
             function moveMarkerStep(pos) {
               marker.setLatLng(pos);
             }
-            animateLatLng(from, to, duration, moveMarkerStep);
+            var animParams = { from, to, duration, cb: moveMarkerStep, onDone: null };
+            if (markerIsAnimating) {
+              markerAnimQueue.push(animParams);
+            } else {
+              if (markerAnim) cancelAnimationFrame(markerAnim);
+              animateLatLng(from, to, duration, moveMarkerStep);
+            }
           } else {
             marker = L.marker([d.lat, d.lon]).addTo(map);
             map.setView([d.lat, d.lon], 17);
