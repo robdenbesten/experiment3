@@ -1,4 +1,5 @@
-// The page is served by the ESP32 over HTTP
+// The page is served by the ESP32 over HTTP, so window.location.hostname
+// is always the ESP32's IP. No hardcoded address needed.
 var DATA_URL = "http://" + window.location.hostname + "/data";
 
 // ── Build DOM ─────────────────────────────────────────────────────────────────
@@ -32,6 +33,7 @@ app.innerHTML = [
       '<button id="record-btn" onclick="toggleRecording()" aria-pressed="false">&#x25CF; Record</button>',
       '<button id="clear-btn" onclick="clearWaypoints()" aria-label="Clear waypoints">&#x2715;</button>',
     '</div>',
+    // Calibration button
     '<div class="card full" style="text-align:center;margin-top:8px;">',
       '<button id="calibrate-btn" style="padding:8px 18px;font-size:1em;">Calibrate Magnetometer</button>',
       '<span id="calib-status" style="margin-left:12px;color:#ffd700;"></span>',
@@ -40,6 +42,31 @@ app.innerHTML = [
   '<div id="map"></div>'
 ].join("");
 
+// ── Magnetometer Calibration ────────────────────────────────────────────────
+var calibrating = false;
+var calibStatus = document.getElementById("calib-status");
+var calibBtn = document.getElementById("calibrate-btn");
+if (calibBtn) {
+  calibBtn.addEventListener("click", function() {
+    if (calibrating) return;
+    calibrating = true;
+    calibBtn.disabled = true;
+    calibStatus.textContent = "Calibrating... Rotate device 360° for 10s";
+    fetch("/calibrate").then(function(r) {
+      setTimeout(function() {
+        calibrating = false;
+        calibBtn.disabled = false;
+        calibStatus.textContent = "Calibration complete!";
+        setTimeout(function() { calibStatus.textContent = ""; }, 3000);
+      }, 10500);
+    }).catch(function() {
+      calibrating = false;
+      calibBtn.disabled = false;
+      calibStatus.textContent = "Calibration failed";
+    });
+  });
+}
+
 function card(extra, id, label, init) {
   return '<div class="card ' + extra + '">' +
     '<div class="label">' + label + '</div>' +
@@ -47,16 +74,15 @@ function card(extra, id, label, init) {
     '</div>';
 }
 
-// ── State & Animation Variables ───────────────────────────────────────────────
 var map            = null;
-var marker         = null;
-var waypoints      = [];
-var wpMarkers      = [];
-var routeLine      = null;
-var navLine        = null;
-var currentWPIndex = 0;
+var marker         = null;   // current position marker (blue)
+var waypoints      = [];     // [{lat, lon}, ...]
+var wpMarkers      = [];     // Leaflet markers per waypoint
+var routeLine      = null;   // polyline through all waypoints
+var navLine        = null;   // dashed line: position → current waypoint
+var currentWPIndex = 0;      // which waypoint we're navigating to
 
-// Animation Targets vs Current (Interpolation)
+// Location & Animation Variables
 var currentLat     = null;
 var currentLon     = null;
 var currentHeading = null;
@@ -77,117 +103,63 @@ var loadingRoute   = false;
 var RECORDINGS_STORAGE_KEY = "gps_recordings_v1";
 var LOCAL_ROUTES_STORAGE_KEY = "gps_saved_routes_v1";
 var GITHUB_ROUTES_URL = "https://robdenbesten.github.io/experiment3/routes.json";
-
 var headingCone = null;
 var HEADING_CONE_ANGLE_DEG = 55;
-var HEADING_CONE_RANGE_PX  = 45; // Screen size in pixels
+var HEADING_CONE_RANGE_M   = 22;
 var HEADING_CONE_STEPS     = 12;
 
-// ── Animation Loop (60 FPS) ──────────────────────────────────────────────────
+// ── Animation Loop ────────────────────────────────────────────────────────────
 function animateMapElements() {
   if (currentLat !== null && targetLat !== null) {
-    var smoothing = 0.15; // Lower = smoother/slower, Higher = snappier
+    // 0.2 is the smoothing factor. Adjust between 0.05 (slower) and 0.5 (faster) if needed.
+    var smoothing = 0.2; 
     
-    // Interpolate Position
     currentLat += (targetLat - currentLat) * smoothing;
     currentLon += (targetLon - currentLon) * smoothing;
 
-    // Interpolate Heading (Shortest Path)
+    // Shortest path interpolation for the heading
     if (currentHeading !== null && targetHeading !== null) {
       var diff = targetHeading - currentHeading;
+      // Normalize difference to -180 to +180 degrees
       diff = ((diff + 540) % 360) - 180; 
       currentHeading += diff * smoothing;
+      // Keep it within 0-360
       currentHeading = (currentHeading + 360) % 360; 
     } else if (targetHeading !== null) {
       currentHeading = targetHeading;
     }
 
-    // 1. Move Pin
+    // Update the Leaflet elements smoothly on screen
     if (marker) {
       marker.setLatLng([currentLat, currentLon]);
     }
     
-    // 2. Update Heading Cone
     updateHeadingCone();
-
-    // 3. Update Navigation UI smoothly
-    if (waypoints.length > 0) {
-      var wp = waypoints[currentWPIndex];
-      var d = haversineM(currentLat, currentLon, wp.lat, wp.lon);
-      var b = bearing(currentLat, currentLon, wp.lat, wp.lon);
-      
-      // Auto-advance logic
-      if (d <= 10 && currentWPIndex < waypoints.length - 1) {
-        currentWPIndex++;
-        refreshMarkerIcons();
-        updateWPInfo();
-      }
-
-      lastTargetDist = d;
-      document.getElementById("target-dist").textContent =
-        d >= 1000 ? (d / 1000).toFixed(2) + " km" : d.toFixed(1) + " m";
-      document.getElementById("target-bear").textContent = bearingLabel(b);
-      
-      if (navLine) {
-        navLine.setLatLngs([[currentLat, currentLon], [wp.lat, wp.lon]]);
-      }
-    }
   }
+
   requestAnimationFrame(animateMapElements);
 }
+requestAnimationFrame(animateMapElements);
 
-// ── Heading Cone logic ────────────────────────────────────────────────────────
-function getHeadingConeLatLngs(lat, lon, headingDeg) {
-  var centerLatLng = L.latLng(lat, lon);
-  var points = [[lat, lon]];
-  
-  // Calculate ground meters for fixed pixel size
-  var pointPx = map.latLngToLayerPoint(centerLatLng);
-  var edgePx = L.point(pointPx.x, pointPx.y - HEADING_CONE_RANGE_PX);
-  var edgeLatLng = map.layerPointToLatLng(edgePx);
-  var dynamicRangeM = centerLatLng.distanceTo(edgeLatLng);
-
-  var halfAngle = HEADING_CONE_ANGLE_DEG / 2;
-  for (var i = 0; i <= HEADING_CONE_STEPS; i++) {
-    var t = i / HEADING_CONE_STEPS;
-    var b = headingDeg - halfAngle + (HEADING_CONE_ANGLE_DEG * t);
-    points.push(destinationPoint(lat, lon, b, dynamicRangeM));
-  }
-  points.push([lat, lon]);
-  return points;
-}
-
-function updateHeadingCone() {
-  if (!map || !map._loaded || currentLat === null || currentLon === null || currentHeading === null) {
-    if (headingCone && map) { map.removeLayer(headingCone); headingCone = null; }
-    return;
-  }
-  var latlngs = getHeadingConeLatLngs(currentLat, currentLon, currentHeading);
-  if (!headingCone) {
-    headingCone = L.polygon(latlngs, {
-      color: "transparent", weight: 0, fillColor: "#4fc3f7", fillOpacity: 0.6, interactive: false
-    }).addTo(map);
-    headingCone.bringToBack();
-  } else {
-    headingCone.setLatLngs(latlngs);
-  }
-}
-
-// ── Navigation Helpers ────────────────────────────────────────────────────────
+// ── Navigation helpers ────────────────────────────────────────────────────────
 function toRad(deg) { return deg * Math.PI / 180; }
 function toDeg(rad) { return rad * 180 / Math.PI; }
 
 function haversineM(lat1, lon1, lat2, lon2) {
   var R = 6371000;
-  var dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
-  var a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+  var dLat = toRad(lat2 - lat1);
+  var dLon = toRad(lon2 - lon1);
+  var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+          Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+          Math.sin(dLon/2) * Math.sin(dLon/2);
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 function bearing(lat1, lon1, lat2, lon2) {
   var dLon = toRad(lon2 - lon1);
   var y = Math.sin(dLon) * Math.cos(toRad(lat2));
-  var x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+  var x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+          Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
   return (toDeg(Math.atan2(y, x)) + 360) % 360;
 }
 
@@ -196,248 +168,720 @@ function bearingLabel(deg) {
   return dirs[Math.round(deg / 22.5) % 16] + " (" + Math.round(deg) + "\u00b0)";
 }
 
-function destinationPoint(lat, lon, brngDeg, distM) {
-  var R = 6371000, brng = toRad(brngDeg), lat1 = toRad(lat), lon1 = toRad(lon), ang = distM / R;
-  var lat2 = Math.asin(Math.sin(lat1)*Math.cos(ang) + Math.cos(lat1)*Math.sin(ang)*Math.cos(brng));
-  var lon2 = lon1 + Math.atan2(Math.sin(brng)*Math.sin(ang)*Math.cos(lat1), Math.cos(ang)-Math.sin(lat1)*Math.sin(lat2));
+function headingLabel(deg) {
+  if (typeof deg !== "number" || !isFinite(deg)) return "-";
+  var normalized = ((deg % 360) + 360) % 360;
+  return bearingLabel(normalized);
+}
+
+function destinationPoint(lat, lon, bearingDeg, distanceM) {
+  var R = 6371000;
+  var brng = toRad(bearingDeg);
+  var lat1 = toRad(lat);
+  var lon1 = toRad(lon);
+  var angDist = distanceM / R;
+
+  var lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(angDist) +
+    Math.cos(lat1) * Math.sin(angDist) * Math.cos(brng)
+  );
+  var lon2 = lon1 + Math.atan2(
+    Math.sin(brng) * Math.sin(angDist) * Math.cos(lat1),
+    Math.cos(angDist) - Math.sin(lat1) * Math.sin(lat2)
+  );
+
   return [toDeg(lat2), toDeg(lon2)];
 }
 
-// ── Persistence & Route Management ────────────────────────────────────────────
+function getHeadingConeLatLngs(lat, lon, headingDeg) {
+  var points = [[lat, lon]];
+  var halfAngle = HEADING_CONE_ANGLE_DEG / 2;
+  for (var i = 0; i <= HEADING_CONE_STEPS; i++) {
+    var t = i / HEADING_CONE_STEPS;
+    var b = headingDeg - halfAngle + (HEADING_CONE_ANGLE_DEG * t);
+    points.push(destinationPoint(lat, lon, b, HEADING_CONE_RANGE_M));
+  }
+  points.push([lat, lon]);
+  return points;
+}
+
+function updateHeadingCone() {
+  if (!map || currentLat === null || currentLon === null || currentHeading === null) {
+    if (headingCone && map) {
+      map.removeLayer(headingCone);
+      headingCone = null;
+    }
+    return;
+  }
+
+  var latlngs = getHeadingConeLatLngs(currentLat, currentLon, currentHeading);
+  if (!headingCone) {
+    headingCone = L.polygon(latlngs, {
+      color: "transparent",
+      weight: 0,
+      opacity: 0,
+      fillColor: "#4fc3f7",
+      fillOpacity: 0.75,
+      interactive: false
+    }).addTo(map);
+    headingCone.bringToBack();
+  } else {
+    headingCone.setLatLngs(latlngs);
+    headingCone.bringToBack();
+  }
+}
+
+// ── Recording and path persistence ───────────────────────────────────────────
 function loadRecordings() {
   try {
     var raw = localStorage.getItem(RECORDINGS_STORAGE_KEY);
-    recordings = raw ? JSON.parse(raw) : [];
-  } catch(_) { recordings = []; }
+    if (!raw) return;
+    var parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      recordings = [];
+      return;
+    }
+    recordings = parsed.filter(function (rec) {
+      return rec && Array.isArray(rec.points) && typeof rec.startedAt === "string";
+    });
+  } catch (_) {
+    recordings = [];
+  }
 }
 
-function saveRecordings() { localStorage.setItem(RECORDINGS_STORAGE_KEY, JSON.stringify(recordings)); }
+function saveRecordings() {
+  try {
+    localStorage.setItem(RECORDINGS_STORAGE_KEY, JSON.stringify(recordings));
+  } catch (_) {}
+}
+
+function normalizeRoute(route, source, fallbackId) {
+  if (!route || typeof route.name !== "string" || !Array.isArray(route.waypoints)) {
+    return null;
+  }
+
+  var normalizedWaypoints = [];
+  for (var i = 0; i < route.waypoints.length; i++) {
+    var wp = route.waypoints[i];
+    if (!wp || typeof wp.lat !== "number" || typeof wp.lon !== "number") {
+      return null;
+    }
+    normalizedWaypoints.push({ lat: wp.lat, lon: wp.lon });
+  }
+
+  var cleanName = route.name.trim();
+  if (!cleanName) {
+    cleanName = "Unnamed route";
+  }
+
+  var rawId = (typeof route.id === "string" && route.id.trim()) ? route.id.trim() : fallbackId;
+  if (!rawId) {
+    rawId = String(Date.now()) + "-" + String(Math.floor(Math.random() * 100000));
+  }
+
+  var id = source === "github" ? "gh-" + rawId : rawId;
+
+  return {
+    id: id,
+    source: source,
+    name: cleanName,
+    createdAt: typeof route.createdAt === "string" ? route.createdAt : new Date().toISOString(),
+    waypoints: normalizedWaypoints
+  };
+}
+
+function getAllRoutes() {
+  return githubRoutes.concat(localRoutes);
+}
+
+function findRouteById(routeId) {
+  if (!routeId) return null;
+  var allRoutes = getAllRoutes();
+  for (var i = 0; i < allRoutes.length; i++) {
+    if (allRoutes[i].id === routeId) {
+      return allRoutes[i];
+    }
+  }
+  return null;
+}
 
 function loadSavedRoutes() {
   try {
     var raw = localStorage.getItem(LOCAL_ROUTES_STORAGE_KEY);
-    localRoutes = raw ? JSON.parse(raw).map(r => normalizeRoute(r, "local")).filter(r => r) : [];
-  } catch(_) { localRoutes = []; }
+    if (!raw) {
+      localRoutes = [];
+      return;
+    }
+
+    var parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      localRoutes = [];
+      return;
+    }
+
+    localRoutes = parsed.map(function (route, idx) {
+      return normalizeRoute(route, "local", "local-" + idx);
+    }).filter(function (route) {
+      return route !== null;
+    });
+  } catch (_) {
+    localRoutes = [];
+  }
 }
 
-function normalizeRoute(r, src, fallId) {
-  if(!r || !r.name || !Array.isArray(r.waypoints)) return null;
-  return {
-    id: r.id || fallId || Date.now(),
-    source: src,
-    name: r.name.trim() || "Unnamed",
-    waypoints: r.waypoints.map(wp => ({lat: wp.lat, lon: wp.lon}))
-  };
+function saveSavedRoutes() {
+  try {
+    localStorage.setItem(LOCAL_ROUTES_STORAGE_KEY, JSON.stringify(localRoutes));
+  } catch (_) {}
 }
 
 function loadGitHubRoutes() {
+  var select = document.getElementById("route-select");
+  var prevSelectedId = select ? select.value : "";
+
   fetch(GITHUB_ROUTES_URL + "?v=" + Date.now(), { cache: "no-store" })
-    .then(r => r.json())
-    .then(data => {
-      githubRoutes = Array.isArray(data) ? data.map(r => normalizeRoute(r, "github")).filter(r => r) : [];
-      refreshRouteDropdown("");
-    }).catch(() => refreshRouteDropdown(""));
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (parsed) {
+      if (!Array.isArray(parsed)) {
+        githubRoutes = [];
+      } else {
+        githubRoutes = parsed.map(function (route, idx) {
+          return normalizeRoute(route, "github", "github-" + idx);
+        }).filter(function (route) {
+          return route !== null;
+        });
+      }
+      refreshRouteDropdown(findRouteById(prevSelectedId) ? prevSelectedId : "");
+    })
+    .catch(function () {
+      githubRoutes = [];
+      refreshRouteDropdown(findRouteById(prevSelectedId) ? prevSelectedId : "");
+    });
 }
 
-function refreshRouteDropdown(selId) {
+function refreshRouteDropdown(selectedId) {
   var select = document.getElementById("route-select");
-  if(!select) return;
-  var all = githubRoutes.concat(localRoutes);
-  select.innerHTML = '<option value="">' + (all.length ? "Select saved route" : "No saved routes") + '</option>';
-  all.forEach(r => {
-    var opt = document.createElement("option");
-    opt.value = r.id;
-    opt.textContent = (r.source === "github" ? "GH: " : "L: ") + r.name;
-    select.appendChild(opt);
-  });
-  if(selId) select.value = selId;
+  if (!select) return;
+  var allRoutes = getAllRoutes();
+
+  select.innerHTML = "";
+
+  var placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = allRoutes.length ? "Select saved route" : "No saved routes";
+  select.appendChild(placeholder);
+
+  for (var i = 0; i < allRoutes.length; i++) {
+    var route = allRoutes[i];
+    var option = document.createElement("option");
+    option.value = route.id;
+    var prefix = route.source === "github" ? "GitHub: " : "Local: ";
+    option.textContent = prefix + route.name + " (" + route.waypoints.length + " pts)";
+    select.appendChild(option);
+  }
+
+  if (selectedId) {
+    select.value = selectedId;
+  } else {
+    select.value = "";
+  }
+
   updateRouteButtons();
 }
 
 function updateRouteButtons() {
-  var sel = document.getElementById("route-select").value;
-  var route = githubRoutes.concat(localRoutes).find(r => r.id == sel);
-  document.getElementById("save-route-btn").disabled = waypoints.length === 0;
-  document.getElementById("delete-route-btn").disabled = !route || route.source !== "local";
+  var saveBtn = document.getElementById("save-route-btn");
+  var deleteBtn = document.getElementById("delete-route-btn");
+  var select = document.getElementById("route-select");
+  if (!saveBtn || !deleteBtn || !select) return;
+
+  var selectedRoute = findRouteById(select.value);
+  saveBtn.disabled = waypoints.length === 0;
+  deleteBtn.disabled = !selectedRoute || selectedRoute.source !== "local";
+}
+
+function clearWaypointsInternal() {
+  for (var i = 0; i < wpMarkers.length; i++) {
+    map.removeLayer(wpMarkers[i]);
+  }
+  wpMarkers = [];
+  waypoints = [];
+  currentWPIndex = 0;
+  lastTargetDist = null;
+
+  if (routeLine) {
+    map.removeLayer(routeLine);
+    routeLine = null;
+  }
+  if (navLine) {
+    map.removeLayer(navLine);
+    navLine = null;
+  }
+
+  updateWPInfo();
+  document.getElementById("target-dist").textContent = "-";
+  document.getElementById("target-bear").textContent = "-";
+  updateRouteButtons();
 }
 
 function saveCurrentRoute() {
-  if(!waypoints.length) return;
-  var name = window.prompt("Route name", "Route " + new Date().toLocaleString());
-  if(!name) return;
-  var route = normalizeRoute({name: name, waypoints: waypoints}, "local", "loc-" + Date.now());
+  if (!waypoints.length) {
+    window.alert("Add at least one waypoint before saving a route.");
+    return;
+  }
+
+  var defaultName = "Route " + new Date().toLocaleString();
+  var inputName = window.prompt("Route name", defaultName);
+  if (inputName === null) return;
+
+  var name = inputName.trim();
+  if (!name) {
+    window.alert("Route name cannot be empty.");
+    return;
+  }
+
+  var route = {
+    id: "route-" + Date.now() + "-" + Math.floor(Math.random() * 100000),
+    source: "local",
+    name: name,
+    createdAt: new Date().toISOString(),
+    waypoints: waypoints.map(function (wp) {
+      return { lat: wp.lat, lon: wp.lon };
+    })
+  };
+
   localRoutes.push(route);
-  localStorage.setItem(LOCAL_ROUTES_STORAGE_KEY, JSON.stringify(localRoutes));
+  saveSavedRoutes();
+  refreshRouteDropdown(route.id);
+}
+
+function loadRouteById(routeId) {
+  if (!routeId) return;
+  if (!map || !window.L) {
+    window.alert("Map is still loading. Try again in a moment.");
+    return;
+  }
+  var route = findRouteById(routeId);
+  if (!route) return;
+
+  loadingRoute = true;
+  clearWaypointsInternal();
+  for (var j = 0; j < route.waypoints.length; j++) {
+    var wp = route.waypoints[j];
+    addWaypoint(wp.lat, wp.lon);
+  }
+  loadingRoute = false;
+
+  if (map && route.waypoints.length) {
+    var bounds = L.latLngBounds(route.waypoints.map(function (wp2) {
+      return [wp2.lat, wp2.lon];
+    }));
+    map.fitBounds(bounds, { padding: [24, 24] });
+  }
+
   refreshRouteDropdown(route.id);
 }
 
 function loadSelectedRoute() {
-  var id = document.getElementById("route-select").value;
-  var route = githubRoutes.concat(localRoutes).find(r => r.id == id);
-  if(!route) return;
-  loadingRoute = true;
-  clearWaypointsInternal();
-  route.waypoints.forEach(wp => addWaypoint(wp.lat, wp.lon));
-  loadingRoute = false;
-  if(map && route.waypoints.length) map.fitBounds(L.latLngBounds(route.waypoints.map(w=>[w.lat, w.lon])), {padding:[24,24]});
-  updateRouteButtons();
+  var select = document.getElementById("route-select");
+  if (!select || !select.value) {
+    updateRouteButtons();
+    return;
+  }
+  loadRouteById(select.value);
 }
 
 function deleteSelectedRoute() {
-  var id = document.getElementById("route-select").value;
-  localRoutes = localRoutes.filter(r => r.id != id);
-  localStorage.setItem(LOCAL_ROUTES_STORAGE_KEY, JSON.stringify(localRoutes));
-  refreshRouteDropdown("");
-}
+  var select = document.getElementById("route-select");
+  if (!select || !select.value) return;
 
-// ── Recording ─────────────────────────────────────────────────────────────────
-function toggleRecording() {
-  if(recording) {
-    recording = false;
-    if(recordingLine) map.removeLayer(recordingLine);
-    if(recordingPoints.length >= 2) {
-      var rec = { startedAt: recordingStartedAt, points: [...recordingPoints] };
-      recordings.push(rec);
-      saveRecordings();
-      downloadRecording(rec);
-    }
-    recordingPoints = [];
-  } else {
-    recording = true;
-    recordingPoints = [];
-    recordingStartedAt = new Date().toISOString();
+  var routeId = select.value;
+  var selectedRoute = findRouteById(routeId);
+  if (!selectedRoute) return;
+  if (selectedRoute.source !== "local") {
+    window.alert("GitHub routes are read-only here. Edit routes.json in your GitHub repo to change them.");
+    return;
   }
-  updateRecordButton();
+
+  var idx = -1;
+  for (var i = 0; i < localRoutes.length; i++) {
+    if (localRoutes[i].id === routeId) {
+      idx = i;
+      break;
+    }
+  }
+  if (idx < 0) return;
+
+  if (!window.confirm("Delete route '" + localRoutes[idx].name + "'?")) {
+    return;
+  }
+
+  localRoutes.splice(idx, 1);
+  saveSavedRoutes();
+  refreshRouteDropdown("");
 }
 
 function updateRecordButton() {
   var btn = document.getElementById("record-btn");
-  btn.textContent = recording ? "■ Stop" : "● Record";
-  btn.classList.toggle("recording", recording);
+  if (!btn) return;
+  if (recording) {
+    btn.textContent = "■ Stop";
+    btn.classList.add("recording");
+    btn.setAttribute("aria-pressed", "true");
+  } else {
+    btn.textContent = "● Record";
+    btn.classList.remove("recording");
+    btn.setAttribute("aria-pressed", "false");
+  }
 }
 
-function addRecordPoint(lat, lon) {
-  if(!recording) return;
-  recordingPoints.push([lat, lon]);
-  if(!recordingLine) {
-    recordingLine = L.polyline(recordingPoints, {color: "#c9a400", weight:3}).addTo(map);
+function updateRecordLine() {
+  if (!map || !recording || recordingPoints.length < 2) return;
+  if (!recordingLine) {
+    recordingLine = L.polyline(recordingPoints, {
+      color: "#c9a400",
+      weight: 3,
+      opacity: 0.85
+    }).addTo(map);
   } else {
     recordingLine.setLatLngs(recordingPoints);
   }
 }
 
+function addRecordPoint(lat, lon) {
+  if (!recording) return;
+  recordingPoints.push([lat, lon]);
+  updateRecordLine();
+}
+
+function timestampForFilename(isoString) {
+  return isoString.replace(/[.:]/g, "-").replace("T", "_").replace("Z", "");
+}
+
 function downloadRecording(rec) {
-  var geo = { type: "FeatureCollection", features: [{ type: "Feature", geometry: { type: "LineString", coordinates: rec.points.map(p=>[p[1],p[0]]) }}]};
-  var blob = new Blob([JSON.stringify(geo)], {type:"application/geo+json"});
-  var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "track.geojson"; a.click();
+  try {
+    var featureCollection = {
+      type: "FeatureCollection",
+      features: [{
+        type: "Feature",
+        properties: {
+          startedAt: rec.startedAt,
+          points: rec.points.length
+        },
+        geometry: {
+          type: "LineString",
+          coordinates: rec.points.map(function (p) { return [p[1], p[0]]; })
+        }
+      }]
+    };
+
+    var blob = new Blob([JSON.stringify(featureCollection, null, 2)], {
+      type: "application/geo+json"
+    });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "gps-track-" + timestampForFilename(rec.startedAt) + ".geojson";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
-// ── Waypoints & Map UI ────────────────────────────────────────────────────────
+function stopRecording() {
+  if (!recording) return;
+
+  recording = false;
+  if (recordingLine && map) {
+    map.removeLayer(recordingLine);
+  }
+  recordingLine = null;
+
+  var enoughPoints = recordingPoints.length >= 2;
+  if (enoughPoints) {
+    var rec = {
+      startedAt: recordingStartedAt || new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+      points: recordingPoints.slice()
+    };
+    recordings.push(rec);
+    saveRecordings();
+
+    // On mobile browsers this usually saves to Downloads or Files.
+    if (!downloadRecording(rec)) {
+      window.alert("Track saved in browser storage, but download failed.");
+    }
+  }
+
+  recordingPoints = [];
+  recordingStartedAt = null;
+  updateRecordButton();
+}
+
+function startRecording() {
+  recording = true;
+  recordingPoints = [];
+  recordingStartedAt = new Date().toISOString();
+  if (recordingLine && map) {
+    map.removeLayer(recordingLine);
+    recordingLine = null;
+  }
+  updateRecordButton();
+}
+
+function toggleRecording() {
+  if (recording) {
+    stopRecording();
+  } else {
+    startRecording();
+  }
+}
+
+// ── Waypoint icon (numbered circle) ──────────────────────────────────────────
 function wpIcon(n, state) {
-  var bg = (state==="active") ? "#ffd700" : (state==="reached" ? "#4f5961" : "#78909c");
-  return L.divIcon({ 
-    className: '', 
-    html: '<div style="background:'+bg+';color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-weight:bold;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.6)">'+n+'</div>',
-    iconSize: [26, 26], iconAnchor: [13, 13]
-  });
+  var bg = "#78909c";
+  if (state === "active") bg = "#ffd700";
+  if (state === "reached") bg = "#4f5961";
+  var html = '<div style="background:' + bg + ';color:#fff;border-radius:50%;' +
+    'width:26px;height:26px;display:flex;align-items:center;justify-content:center;' +
+    'font-weight:bold;font-size:13px;border:2px solid #fff;' +
+    'box-shadow:0 1px 4px rgba(0,0,0,.6)">' + n + '</div>';
+  return L.divIcon({ className: '', html: html, iconSize: [26, 26], iconAnchor: [13, 13] });
 }
 
-function refreshMarkerIcons() { wpMarkers.forEach((m, i) => m.setIcon(wpIcon(i+1, i < currentWPIndex ? "reached" : (i===currentWPIndex ? "active" : "upcoming")))); }
+function waypointState(i) {
+  if (i < currentWPIndex) return "reached";
+  if (i === currentWPIndex) return "active";
+  return "upcoming";
+}
+
+function refreshMarkerIcons() {
+  for (var i = 0; i < wpMarkers.length; i++) {
+    wpMarkers[i].setIcon(wpIcon(i + 1, waypointState(i)));
+  }
+}
+
+// ── Placing mode ──────────────────────────────────────────────────────────────
+var placingMode = false;
+var crosshair   = null;
+
+function togglePlace() {
+  placingMode = !placingMode;
+  var actionRow  = document.getElementById("action-row");
+  var placeBtn   = document.getElementById("place-btn");
+  if (placingMode) {
+    actionRow.classList.add("placing");
+    placeBtn.textContent      = "Done";
+    if (!crosshair) {
+      crosshair = document.createElement("div");
+      crosshair.id = "crosshair";
+      crosshair.innerHTML = '<span>&#x271B;</span>';
+      document.getElementById("map").appendChild(crosshair);
+    }
+    crosshair.style.display = "flex";
+  } else {
+    actionRow.classList.remove("placing");
+    placeBtn.textContent      = "Add Waypoints";
+    if (crosshair) crosshair.style.display = "none";
+  }
+}
+
+function confirmWaypoint() {
+  if (!map) return;
+  var c = map.getCenter();
+  addWaypoint(c.lat, c.lng);
+}
 
 function addWaypoint(lat, lon) {
-  waypoints.push({lat, lon});
-  var m = L.marker([lat, lon], {icon: wpIcon(waypoints.length, waypoints.length-1 === currentWPIndex ? "active" : "upcoming")}).addTo(map);
+  waypoints.push({ lat: lat, lon: lon });
+  var idx = waypoints.length - 1;
+  var m = L.marker([lat, lon], { icon: wpIcon(idx + 1, waypointState(idx)) }).addTo(map);
   wpMarkers.push(m);
-  if(routeLine) map.removeLayer(routeLine);
-  if(waypoints.length > 1) routeLine = L.polyline(waypoints.map(w=>[w.lat, w.lon]), {color:"#78909c", weight:2, dashArray:"4,4"}).addTo(map);
+
+  // Route line through all waypoints
+  if (routeLine) {
+    map.removeLayer(routeLine);
+  }
+  if (waypoints.length > 1) {
+    var latlngs = waypoints.map(function(wp) { return [wp.lat, wp.lon]; });
+    routeLine = L.polyline(latlngs, { color: "#78909c", weight: 2, dashArray: "4,4" }).addTo(map);
+  }
+
   updateWPInfo();
-  if(!loadingRoute) updateRouteButtons();
+  updateNavigation();
+  if (!loadingRoute) {
+    updateRouteButtons();
+  }
 }
 
-function clearWaypointsInternal() {
-  wpMarkers.forEach(m => map.removeLayer(m));
-  wpMarkers = []; waypoints = []; currentWPIndex = 0;
-  if(routeLine) { map.removeLayer(routeLine); routeLine = null; }
-  if(navLine) { map.removeLayer(navLine); navLine = null; }
-  updateWPInfo();
-}
+function clearWaypoints() {
+  if (!window.confirm("Are you sure you want to clear all waypoints?")) {
+    return;
+  }
 
-function clearWaypoints() { if(confirm("Clear all?")) clearWaypointsInternal(); }
+  clearWaypointsInternal();
+}
 
 function updateWPInfo() {
   var n = waypoints.length;
   var el = document.getElementById("wp-info");
-  if(n === 0) { el.textContent = "No waypoints yet"; return; }
-  var pct = Math.round((currentWPIndex / n) * 100);
-  el.innerHTML = '<div class="progress-wrap"><div class="progress-fill" style="width:'+pct+'%"></div><span class="progress-text">'+currentWPIndex+'/'+n+'</span></div>';
+  if (n === 0) {
+    el.textContent = "No waypoints yet";
+    return;
+  }
+
+  var completed = currentWPIndex;
+  if (currentWPIndex === n - 1 && lastTargetDist !== null && lastTargetDist <= 10) {
+    completed = n;
+  }
+
+  var ratio = Math.max(0, Math.min(1, completed / n));
+  var percent = (ratio * 100).toFixed(1);
+  var text = completed + "/" + n;
+
+  el.innerHTML =
+    '<div class="progress-wrap" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' +
+    Math.round(ratio * 100) + '">' +
+      '<div class="progress-fill" style="width:' + percent + '%"></div>' +
+      '<span class="progress-text">' + text + '</span>' +
+    '</div>';
 }
 
-var placingMode = false, crosshair = null;
-function togglePlace() {
-  placingMode = !placingMode;
-  document.getElementById("action-row").classList.toggle("placing", placingMode);
-  document.getElementById("place-btn").textContent = placingMode ? "Done" : "Add Waypoints";
-  if(!crosshair) { crosshair = document.createElement("div"); crosshair.id = "crosshair"; crosshair.innerHTML = '<span>&#x271B;</span>'; document.getElementById("map").appendChild(crosshair); }
-  crosshair.style.display = placingMode ? "flex" : "none";
+function updateNavigation() {
+  if (waypoints.length === 0 || currentLat === null) return;
+  var wp = waypoints[currentWPIndex];
+  var d = haversineM(currentLat, currentLon, wp.lat, wp.lon);
+  // Auto-advance when within 10 m of current waypoint
+  if (d <= 10 && currentWPIndex < waypoints.length - 1) {
+    currentWPIndex++;
+    refreshMarkerIcons();
+    updateWPInfo();
+    wp = waypoints[currentWPIndex];
+    d  = haversineM(currentLat, currentLon, wp.lat, wp.lon);
+  }
+  lastTargetDist = d;
+  updateWPInfo();
+  var b = bearing(currentLat, currentLon, wp.lat, wp.lon);
+  document.getElementById("target-dist").textContent =
+    d >= 1000 ? (d / 1000).toFixed(2) + " km" : d.toFixed(0) + " m";
+  document.getElementById("target-bear").textContent = bearingLabel(b);
+  if (map) {
+    if (!navLine) {
+      navLine = L.polyline([], { color: "#ffd700", weight: 2, dashArray: "6,6" }).addTo(map);
+    }
+    navLine.setLatLngs([[currentLat, currentLon], [wp.lat, wp.lon]]);
+  }
 }
 
-function confirmWaypoint() { if(map) addWaypoint(map.getCenter().lat, map.getCenter().lng); }
-
-// ── Magnetometer Calibration ────────────────────────────────────────────────
-var calibrating = false;
-var calibBtn = document.getElementById("calibrate-btn");
-if (calibBtn) {
-  calibBtn.addEventListener("click", function() {
-    if (calibrating) return;
-    calibrating = true; calibBtn.disabled = true;
-    document.getElementById("calib-status").textContent = "Rotate 360° for 10s...";
-    fetch("/calibrate").then(() => {
-      setTimeout(() => {
-        calibrating = false; calibBtn.disabled = false;
-        document.getElementById("calib-status").textContent = "Success!";
-        setTimeout(() => document.getElementById("calib-status").textContent = "", 3000);
-      }, 10500);
-    });
-  });
-}
-
-// ── Initialization ────────────────────────────────────────────────────────────
+// ── Map (loaded lazily; works only when phone has internet) ───────────────────
 function initMap() {
-  var css = document.createElement("link"); css.rel="stylesheet"; css.href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"; document.head.appendChild(css);
-  var js = document.createElement("script"); js.src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-  js.onload = function() {
+  var mapDiv = document.getElementById("map");
+  mapDiv.textContent = "Loading map...";
+
+  var css = document.createElement("link");
+  css.rel  = "stylesheet";
+  css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+  document.head.appendChild(css);
+
+  var js   = document.createElement("script");
+  js.src   = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+  js.onload = function () {
+    mapDiv.textContent = "";
     map = L.map("map").setView([52.0, 5.1], 13);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "&copy; OSM" }).addTo(map);
-    requestAnimationFrame(animateMapElements);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap"
+    }).addTo(map);
+
+    if (recording && recordingPoints.length > 1) {
+      updateRecordLine();
+    }
+  };
+  js.onerror = function () {
+    mapDiv.textContent = "Map unavailable (no internet)";
   };
   document.head.appendChild(js);
 }
 
+// ── Data polling ──────────────────────────────────────────────────────────────
 function update() {
-  fetch(DATA_URL).then(r => r.json()).then(d => {
-    document.getElementById("conn").textContent = "OK - " + new Date().toLocaleTimeString();
-    document.getElementById("conn").className = "value ok";
-    if (d.fix) {
-      document.getElementById("status").textContent = "Fix acquired";
-      document.getElementById("status").className = "value fix";
-      targetLat = d.lat; targetLon = d.lon;
-      if (currentLat === null) { currentLat = targetLat; currentLon = targetLon; }
-      if (map && !marker) { marker = L.marker([currentLat, currentLon]).addTo(map); map.setView([currentLat, currentLon], 17); }
-      addRecordPoint(d.lat, d.lon);
-    } else {
-      document.getElementById("status").textContent = "No fix";
-      document.getElementById("status").className = "value no-fix";
-    }
-    if (d.heading !== undefined) {
-      document.getElementById("heading").textContent = Math.round(d.heading) + "°";
-      targetHeading = d.heading;
-      if (currentHeading === null) currentHeading = targetHeading;
-    }
-    document.getElementById("sats").textContent = d.sats + " sats";
-    document.getElementById("speed").textContent = d.spd ? d.spd.toFixed(1) + " km/h" : "-";
-  }).catch(() => { document.getElementById("conn").className = "value err"; });
+  fetch(DATA_URL)
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (d) {
+      var conn = document.getElementById("conn");
+      conn.textContent  = "OK \u2013 " + new Date().toLocaleTimeString();
+      conn.className    = "value ok";
+
+      var st = document.getElementById("status");
+      if (d.fix) {
+        st.textContent = "Fix acquired";
+        st.className   = "value fix";
+        
+        // Update Target values instead of direct assignment
+        targetLat = d.lat;
+        targetLon = d.lon;
+
+        // Snap immediately if this is the very first time we get a fix
+        if (currentLat === null) {
+          currentLat = targetLat;
+          currentLon = targetLon;
+        }
+
+        if (map) {
+          if (!marker) {
+            marker = L.marker([currentLat, currentLon]).addTo(map);
+            map.setView([currentLat, currentLon], 17);
+          }
+        }
+        
+        addRecordPoint(d.lat, d.lon);
+        updateNavigation();
+      } else {
+        st.textContent = "No fix (waiting for GPS)";
+        st.className   = "value no-fix";
+      }
+
+      // Update heading target
+      if (typeof d.heading !== "undefined" && !isNaN(d.heading)) {
+        document.getElementById("heading").textContent = d.heading;
+        targetHeading = d.heading;
+
+        // Snap immediately on first heading
+        if (currentHeading === null) currentHeading = targetHeading;
+      } else {
+        document.getElementById("heading").textContent = "-";
+        targetHeading = null;
+      }
+
+      document.getElementById("sats").textContent  = d.sats_valid ? d.sats + " sats"             : "0 sats";
+      document.getElementById("speed").textContent = d.spd_valid  ? d.spd.toFixed(1)  + " km/h" : "-";
+    })
+    .catch(function (err) {
+      var conn = document.getElementById("conn");
+      conn.textContent = "Error: " + err.message;
+      conn.className   = "value err";
+    });
 }
 
-loadRecordings(); loadSavedRoutes(); loadGitHubRoutes();
+// Start immediately, then every 200 ms for smoother heading updates
+loadRecordings();
+loadSavedRoutes();
+refreshRouteDropdown("");
+loadGitHubRoutes();
+updateRecordButton();
+update();
 setInterval(update, 200);
-window.addEventListener("load", initMap);
+if (document.readyState === "complete") {
+  initMap();
+} else {
+  window.addEventListener("load", initMap);
+}
