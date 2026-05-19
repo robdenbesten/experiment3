@@ -789,9 +789,6 @@ function update() {
         st.className   = "value fix";
         currentLat = d.lat;
         currentLon = d.lon;
-        if (d.heading_valid) {
-          currentHeading = ((d.heading % 360) + 360) % 360;
-        }
         if (map) {
           if (marker) {
             marker.setLatLng([d.lat, d.lon]);
@@ -799,24 +796,26 @@ function update() {
             marker = L.marker([d.lat, d.lon]).addTo(map);
             map.setView([d.lat, d.lon], 17);
           }
-          updateHeadingCone();
         }
         addRecordPoint(d.lat, d.lon);
         updateNavigation();
       } else {
         st.textContent = "No fix (waiting for GPS)";
         st.className   = "value no-fix";
-        currentHeading = null;
-        updateHeadingCone();
       }
+
+      // Always update heading card, regardless of GPS fix
+      if (d.heading_valid) {
+        currentHeading = ((d.heading % 360) + 360) % 360;
+        document.getElementById("heading").textContent = headingLabel(d.heading);
+      } else {
+        currentHeading = null;
+        document.getElementById("heading").textContent = "-";
+      }
+      updateHeadingCone();
 
       document.getElementById("sats").textContent  = d.sats_valid ? d.sats + " sats"             : "0 sats";
       document.getElementById("speed").textContent = d.spd_valid  ? d.spd.toFixed(1)  + " km/h" : "-";
-      document.getElementById("heading").textContent = d.heading_valid ? headingLabel(d.heading) : "-";
-      if (!d.heading_valid) {
-        currentHeading = null;
-        updateHeadingCone();
-      }
     })
     .catch(function (err) {
       var conn = document.getElementById("conn");

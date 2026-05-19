@@ -100,8 +100,22 @@ bool  magReady = false;
 bool readHeading(float& outHeadingDeg) {
   float xyz[3];
   if (!mag.readXYZ(xyz)) return false;
+  // During calibration, do not update heading
+  if (calibrating) return false;
   float x = xyz[0];
   float y = xyz[1];
+  // Only apply calibration if min < max for all axes and not default values
+  bool calibrationValid = true;
+  for (int i = 0; i < 3; ++i) {
+    if (magMin[i] >= magMax[i] || magMin[i] == 10000 || magMax[i] == -10000) {
+      calibrationValid = false;
+      break;
+    }
+  }
+  if (calibrationValid) {
+    x = (x - (magMin[0] + magMax[0]) / 2.0f) / ((magMax[0] - magMin[0]) / 2.0f);
+    y = (y - (magMin[1] + magMax[1]) / 2.0f) / ((magMax[1] - magMin[1]) / 2.0f);
+  }
   if (x == 0.0f && y == 0.0f) return false;
   float heading = atan2(y, x) * 180.0f / PI;
   if (heading < 0.0f) heading += 360.0f;
