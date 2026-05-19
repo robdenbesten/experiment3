@@ -13,7 +13,7 @@ void startCalibration() {
   }
 }
 
-void updateCalibration(float* xyz) {
+void updateCalibration(const float* xyz) {
   for (int i = 0; i < 3; ++i) {
     if (xyz[i] < magMin[i]) magMin[i] = xyz[i];
     if (xyz[i] > magMax[i]) magMax[i] = xyz[i];
@@ -97,25 +97,22 @@ bool  headingValid = false;
 float headingDeg   = 0.0f;
 bool  magReady = false;
 
-bool readHeading(float& outHeadingDeg) {
-  float xyz[3];
-  if (!mag.readXYZ(xyz)) return false;
-  // During calibration, do not update heading
-  if (calibrating) return false;
-  float x = xyz[0];
-  float y = xyz[1];
-  // Only apply calibration if min < max for all axes and not default values
-  bool calibrationValid = true;
+
+// Helper to check if calibration is valid (magMin changed from default)
+bool isCalibrationValid() {
   for (int i = 0; i < 3; ++i) {
-    if (magMin[i] >= magMax[i] || magMin[i] == 10000 || magMax[i] == -10000) {
-      calibrationValid = false;
-      break;
-    }
+    if (magMin[i] == 10000 || magMax[i] == -10000 || magMin[i] >= magMax[i]) return false;
+    if ((magMax[i] - magMin[i]) < 0.1) return false;
   }
-  if (calibrationValid) {
-    x = (x - (magMin[0] + magMax[0]) / 2.0f) / ((magMax[0] - magMin[0]) / 2.0f);
-    y = (y - (magMin[1] + magMax[1]) / 2.0f) / ((magMax[1] - magMin[1]) / 2.0f);
-  }
+  return true;
+}
+
+// Calculate heading using reference logic, using already-read xyz
+bool calculateHeading(const float* xyz, float& outHeadingDeg) {
+  if (!isCalibrationValid() || calibrating) return false;
+  // Apply calibration (offset and scale)
+  float x = (xyz[0] - (magMin[0] + magMax[0]) / 2.0f) / ((magMax[0] - magMin[0]) / 2.0f);
+  float y = (xyz[1] - (magMin[1] + magMax[1]) / 2.0f) / ((magMax[1] - magMin[1]) / 2.0f);
   if (x == 0.0f && y == 0.0f) return false;
   float heading = atan2(y, x) * 180.0f / PI;
   if (heading < 0.0f) heading += 360.0f;
@@ -152,7 +149,7 @@ void handleOptions() {
 }
 
 void handleData() {
-  char json[320];
+  char json[400]; // Increased buffer for safety
   snprintf(json, sizeof(json),
     "{\"fix\":%s,\"lat\":%.6f,\"lon\":%.6f,\"dist\":%.2f,"
     "\"alt_valid\":%s,\"alt\":%.1f,"
@@ -236,38 +233,42 @@ void setup() {
 void loop() {
   static unsigned long lastBlink = 0;
   static bool blinkState = false;
+  static float lastMagXYZ[3] = {0, 0, 0};
+  bool magReadSuccess = false;
+
   if (WiFi.status() != WL_CONNECTED) {
-    // Try to reconnect and blink yellow
     if (millis() - lastBlink > 500) {
       blinkState = !blinkState;
       setLedColor(WIFI_LED_CONNECTING, blinkState);
       lastBlink = millis();
     }
-    // Optionally, try to reconnect here if desired
-    // WiFi.reconnect();
     delay(10);
     return;
   } else {
     setLedColor(WIFI_LED_CONNECTED);
   }
+
   server.handleClient();
   while (gpsSerial.available()) {
     gps.encode(gpsSerial.read());
   }
+
   if (millis() - lastHeadingRead >= 100) {
     lastHeadingRead = millis();
     if (magReady) {
-      float xyz[3];
-      if (mag.readXYZ(xyz)) {
+      magReadSuccess = mag.readXYZ(lastMagXYZ);
+      if (magReadSuccess) {
         if (calibrating) {
-          updateCalibration(xyz);
+          updateCalibration(lastMagXYZ);
           if (millis() - calibrationStart >= 10000) {
             finishCalibration();
           }
         }
         float h = 0.0f;
-        headingValid = readHeading(h);
+        headingValid = calculateHeading(lastMagXYZ, h);
         if (headingValid) headingDeg = h;
+        Serial.print("Heading: ");
+        Serial.println(headingDeg);
       } else {
         headingValid = false;
       }
@@ -275,6 +276,7 @@ void loop() {
       headingValid = false;
     }
   }
+
   if (millis() - lastCalc >= 1000) {
     lastCalc = millis();
     if (gps.location.isValid()) {
