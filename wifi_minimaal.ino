@@ -1,3 +1,27 @@
+#define LED_PIN 21 // Change this if your onboard LED is on a different pin
+
+enum WifiLedStatus {
+  WIFI_LED_CONNECTING,
+  WIFI_LED_CONNECTED,
+  WIFI_LED_FAILED
+};
+
+void setLedColor(WifiLedStatus status, bool blinkState = false) {
+  // For a single-color onboard LED, we simulate colors:
+  // Green = ON, Red = fast blink, Yellow = slow blink
+  // If you have an RGB LED, you can expand this logic.
+  switch (status) {
+    case WIFI_LED_CONNECTED:
+      digitalWrite(LED_PIN, HIGH); // ON (green)
+      break;
+    case WIFI_LED_CONNECTING:
+      digitalWrite(LED_PIN, blinkState ? HIGH : LOW); // Blinking (yellow)
+      break;
+    case WIFI_LED_FAILED:
+      digitalWrite(LED_PIN, LOW); // OFF (red, or always off)
+      break;
+  }
+}
 #include <HardwareSerial.h>
 #include <TinyGPSPlus.h>
 #include <WiFi.h>
@@ -6,9 +30,9 @@
 #include <Wire.h>
 #include <qmc5883p.h>
 
-const char* WIFI_SSID     = "gringoburru";
-const char* WIFI_PASSWORD = "campina1";
-const char* DEVICE_HOSTNAME = "esp32tracker";
+const char* WIFI_SSID     = "Gringo Burru";
+const char* WIFI_PASSWORD = "Campina1";
+
 
 static const int RX_PIN = 44;
 static const int TX_PIN = 43;
@@ -45,38 +69,16 @@ bool readHeading(float& outHeadingDeg) {
 
 const char ROOT_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
-<html lang=\"en\">
+<html lang="en">
 <head>
-  <meta charset=\"utf-8\">
-  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GPS Tracker</title>
+  <link rel="stylesheet" href="https://robdenbesten.github.io/experiment3/style.css">
 </head>
 <body>
-  <div id=\"app\"><p style=\"font-family:sans-serif;color:#eee;background:#1a1a2e;margin:0;padding:16px\">Loading...</p></div>
-  <script>
-  (function () {
-    var BASE = 'https://robdenbesten.github.io/experiment3/';
-    var bust = Date.now();
-    function injectCSS(css) {
-      var el = document.createElement('style');
-      el.textContent = css;
-      document.head.appendChild(el);
-    }
-    function injectJS(js) {
-      var el = document.createElement('script');
-      el.textContent = js;
-      document.head.appendChild(el);
-    }
-    fetch(BASE + 'style.css?v=' + bust)
-      .then(function (r) { return r.text(); })
-      .then(function (t) { injectCSS(t); })
-      .catch(function () {});
-    fetch(BASE + 'app.js?v=' + bust)
-      .then(function (r) { return r.text(); })
-      .then(function (t) { injectJS(t); })
-      .catch(function () {});
-  })();
-  </script>
+  <div id="app"><p style="font-family:sans-serif;color:#eee;background:#1a1a2e;margin:0;padding:16px">Loading...</p></div>
+  <script src="https://robdenbesten.github.io/experiment3/app.js"></script>
 </body>
 </html>
 )rawliteral";
@@ -120,6 +122,8 @@ void handleData() {
 }
 
 void setup() {
+    pinMode(LED_PIN, OUTPUT);
+    setLedColor(WIFI_LED_CONNECTING, false);
   Serial.begin(115200);
   delay(100);
 
@@ -132,29 +136,36 @@ void setup() {
     Serial.println("Warning: magnetometer init failed. Heading updates disabled.");
   }
 
+
   WiFi.persistent(false);
   WiFi.setAutoReconnect(true);
   WiFi.mode(WIFI_STA);
-  WiFi.setHostname(DEVICE_HOSTNAME);
   delay(100);
+
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting");
+  unsigned long connectStart = millis();
+  bool ledBlink = false;
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
+    ledBlink = !ledBlink;
+    setLedColor(WIFI_LED_CONNECTING, ledBlink);
+    if (millis() - connectStart > 15000) { // 15 seconds timeout
+      Serial.println("\nWiFi connection failed!");
+      setLedColor(WIFI_LED_FAILED);
+      break;
+    }
   }
-  Serial.print("\nIP: ");
-  Serial.println(WiFi.localIP());
-  Serial.print("Open on phone: http://");
-  Serial.println(WiFi.localIP());
-  if (MDNS.begin(DEVICE_HOSTNAME)) {
-    Serial.print("Or open on phone: http://");
-    Serial.print(DEVICE_HOSTNAME);
-    Serial.println(".local");
-  } else {
-    Serial.println("Warning: mDNS init failed (.local name unavailable).");
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("\nIP: ");
+    Serial.println(WiFi.localIP());
+    Serial.print("Open on phone: http://");
+    Serial.println(WiFi.localIP());
+    setLedColor(WIFI_LED_CONNECTED);
   }
+
 
   server.on("/",     HTTP_GET,     handleRoot);
   server.on("/data", HTTP_GET,     handleData);
@@ -166,9 +177,21 @@ void setup() {
 }
 
 void loop() {
+  static unsigned long lastBlink = 0;
+  static bool blinkState = false;
   if (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+    // Try to reconnect and blink yellow
+    if (millis() - lastBlink > 500) {
+      blinkState = !blinkState;
+      setLedColor(WIFI_LED_CONNECTING, blinkState);
+      lastBlink = millis();
+    }
+    // Optionally, try to reconnect here if desired
+    // WiFi.reconnect();
+    delay(10);
     return;
+  } else {
+    setLedColor(WIFI_LED_CONNECTED);
   }
   server.handleClient();
   while (gpsSerial.available()) {
