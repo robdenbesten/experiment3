@@ -1,7 +1,6 @@
-// The page is served by the ESP32 over HTTP, so window.location.hostname
-// is always the ESP32's IP. No hardcoded address needed.
-var DATA_URL = "http://" + window.location.hostname + "/data";
-var TARGET_URL = "http://" + window.location.hostname + "/target";
+// Use same-origin relative endpoints to avoid protocol/host mismatches.
+var DATA_URL = "/data";
+var TARGET_URL = "/target";
 
 // ── Build DOM ─────────────────────────────────────────────────────────────────
 var app = document.getElementById("app");

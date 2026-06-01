@@ -104,6 +104,12 @@ TinyGPSPlus gps;
 HardwareSerial gpsSerial(1);
 WebServer server(80);
 
+// Forward declarations for symbols used in handleTarget() before their definitions.
+extern float currentTargetHeading;
+extern bool hasTargetHeading;
+extern bool directionLedsActive;
+void turnOffDirectionLeds();
+
 bool loadCalibrationFromStorage() {
   bool loaded = false;
   if (!preferences.begin(calibrationNs, true)) {
@@ -165,6 +171,7 @@ void handleTarget() {
   while (h >= 360.0f) h -= 360.0f;
   currentTargetHeading = h;
   hasTargetHeading = true;
+  Serial.printf("Target heading received: %.1f\n", currentTargetHeading);
 
   char json[96];
   snprintf(json, sizeof(json), "{\"ok\":true,\"target_valid\":true,\"target_heading\":%.1f}", currentTargetHeading);
@@ -185,7 +192,7 @@ float currentTargetHeading = 0.0f;
 bool hasTargetHeading = false;
 
 const unsigned long directionCheckInterval = 5000;
-const unsigned long directionLedOnDuration = 700;
+const unsigned long directionLedOnDuration = 300;
 unsigned long lastDirectionCheck = 0;
 bool directionLedsActive = false;
 unsigned long directionLedsActivatedAt = 0;
@@ -482,14 +489,21 @@ void loop() {
         headingValid = calculateHeading(lastMagXYZ, h);
         if (headingValid) headingDeg = h;
 
-        if (!calibrating && headingValid && hasTargetHeading) {
-          unsigned long now = millis();
-          if (now - lastDirectionCheck >= directionCheckInterval) {
+        unsigned long now = millis();
+        if (now - lastDirectionCheck >= directionCheckInterval) {
+          lastDirectionCheck = now;
+
+          if (calibrating) {
+            Serial.println("Mode1 LED skipped: calibration in progress");
+          } else if (!headingValid) {
+            Serial.println("Mode1 LED skipped: heading invalid");
+          } else if (!hasTargetHeading) {
+            Serial.println("Mode1 LED skipped: no target heading received yet");
+          } else {
             float signedDelta = shortestAngleDifference(headingDeg, currentTargetHeading);
             updateDirectionLedsMode1(headingDeg, currentTargetHeading);
             directionLedsActive = true;
             directionLedsActivatedAt = now;
-            lastDirectionCheck = now;
             Serial.printf("Mode1 LED update. Heading=%.1f Target=%.1f Delta=%.1f\n", headingDeg, currentTargetHeading, signedDelta);
           }
         }
