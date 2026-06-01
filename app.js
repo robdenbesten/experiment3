@@ -1,6 +1,7 @@
 // Use same-origin relative endpoints to avoid protocol/host mismatches.
-var DATA_URL = "/data";
-var TARGET_URL = "/target";
+var DATA_URL      = "/data";
+var WAYPOINTS_URL = "/waypoints";
+var VIBRATION_URL = "/vibration";
 
 // ── Build DOM ─────────────────────────────────────────────────────────────────
 var app = document.getElementById("app");
@@ -58,18 +59,10 @@ function updateLedToggleButton() {
   ledToggleBtn.style.color = directionLedsEnabled ? "#1b1b1b" : "";
 }
 
-function disableDirectionLedsOnDevice() {
-  fetch(TARGET_URL + "?clear=1").catch(function () {});
-}
-
 function setDirectionLedsEnabled(enabled) {
   directionLedsEnabled = enabled;
   updateLedToggleButton();
-  if (!directionLedsEnabled) {
-    lastTargetSentHeading = null;
-    lastTargetSentAt = 0;
-    disableDirectionLedsOnDevice();
-  }
+  fetch(VIBRATION_URL + "?enabled=" + (enabled ? "1" : "0")).catch(function () {});
 }
 
 if (ledToggleBtn) {
@@ -139,10 +132,6 @@ var currentHeading = null;
 var targetLat      = null;
 var targetLon      = null;
 var targetHeading  = null;
-var lastTargetSentAt = 0;
-var lastTargetSentHeading = null;
-var waypointBurstRemaining = 0;
-
 var lastTargetDist = null;
 var recording      = false;
 var recordingPoints = [];
@@ -246,50 +235,13 @@ function destinationPoint(lat, lon, bearingDeg, distanceM) {
   return [toDeg(lat2), toDeg(lon2)];
 }
 
-function normalizeDeg(deg) {
-  var d = deg;
-  while (d < 0) d += 360;
-  while (d >= 360) d -= 360;
-  return d;
-}
-
-function sendTargetHeadingToDevice(headingDeg, dist) {
-  if (!directionLedsEnabled) return;
-  if (typeof headingDeg !== "number" || !isFinite(headingDeg)) return;
-
-  var now = Date.now();
-  var normalized = normalizeDeg(headingDeg);
-  var shouldSend = false;
-
-  // Determine the send interval based on burst state and distance
-  var interval;
-  if (waypointBurstRemaining > 0) {
-    interval = 1000;
-  } else if (typeof dist !== "number" || dist > 50) {
-    interval = 5000;
-  } else if (dist <= 10) {
-    interval = 1000;
-  } else {
-    // Linear: 5000 ms at 50 m -> 1000 ms at 10 m
-    interval = 5000 - ((50 - dist) / 40) * 4000;
+function syncWaypointsToDevice() {
+  var params = "n=" + waypoints.length;
+  for (var i = 0; i < waypoints.length; i++) {
+    params += "&lat" + i + "=" + waypoints[i].lat.toFixed(7);
+    params += "&lon" + i + "=" + waypoints[i].lon.toFixed(7);
   }
-
-  if (lastTargetSentHeading === null) {
-    shouldSend = true;
-  } else {
-    var diff = Math.abs(normalized - lastTargetSentHeading);
-    diff = Math.min(diff, 360 - diff);
-    if (diff >= 2) shouldSend = true;
-    if (now - lastTargetSentAt >= interval) shouldSend = true;
-  }
-
-  if (!shouldSend) return;
-
-  if (waypointBurstRemaining > 0) waypointBurstRemaining--;
-
-  lastTargetSentHeading = normalized;
-  lastTargetSentAt = now;
-  fetch(TARGET_URL + "?heading=" + encodeURIComponent(normalized.toFixed(1))).catch(function () {});
+  fetch(WAYPOINTS_URL + "?" + params).catch(function () {});
 }
 
 function getHeadingConeLatLngs(lat, lon, headingDeg) {
@@ -510,7 +462,6 @@ function clearWaypointsInternal() {
   waypoints = [];
   currentWPIndex = 0;
   lastTargetDist = null;
-  waypointBurstRemaining = 0;
 
   if (routeLine) {
     map.removeLayer(routeLine);
@@ -524,7 +475,7 @@ function clearWaypointsInternal() {
   updateWPInfo();
   document.getElementById("target-dist").textContent = "-";
   document.getElementById("target-bear").textContent = "-";
-  disableDirectionLedsOnDevice();
+  syncWaypointsToDevice();
   updateRouteButtons();
 }
 
@@ -575,6 +526,7 @@ function loadRouteById(routeId) {
     addWaypoint(wp.lat, wp.lon);
   }
   loadingRoute = false;
+  syncWaypointsToDevice();
 
   if (map && route.waypoints.length) {
     var bounds = L.latLngBounds(route.waypoints.map(function (wp2) {
@@ -814,11 +766,6 @@ function confirmWaypoint() {
 function addWaypoint(lat, lon) {
   waypoints.push({ lat: lat, lon: lon });
   var idx = waypoints.length - 1;
-  // First waypoint becomes the active target — trigger burst
-  if (idx === 0) {
-    waypointBurstRemaining = 3;
-    lastTargetSentAt = 0;
-  }
   var m = L.marker([lat, lon], { icon: wpIcon(idx + 1, waypointState(idx)) }).addTo(map);
   wpMarkers.push(m);
 
@@ -834,6 +781,7 @@ function addWaypoint(lat, lon) {
   updateWPInfo();
   updateNavigation();
   if (!loadingRoute) {
+    syncWaypointsToDevice();
     updateRouteButtons();
   }
 }
@@ -874,24 +822,6 @@ function updateWPInfo() {
 function updateNavigation() {
   if (waypoints.length === 0 || currentLat === null) return;
   var wp = waypoints[currentWPIndex];
-  var d = haversineM(currentLat, currentLon, wp.lat, wp.lon);
-  // Auto-advance when within 10 m of current waypoint
-  if (d <= 10 && currentWPIndex < waypoints.length - 1) {
-    currentWPIndex++;
-    waypointBurstRemaining = 3;
-    lastTargetSentAt = 0;
-    refreshMarkerIcons();
-    updateWPInfo();
-    wp = waypoints[currentWPIndex];
-    d  = haversineM(currentLat, currentLon, wp.lat, wp.lon);
-  }
-  lastTargetDist = d;
-  updateWPInfo();
-  var b = bearing(currentLat, currentLon, wp.lat, wp.lon);
-  sendTargetHeadingToDevice(b, d);
-  document.getElementById("target-dist").textContent =
-    d >= 1000 ? (d / 1000).toFixed(2) + " km" : d.toFixed(0) + " m";
-  document.getElementById("target-bear").textContent = bearingLabel(b);
   if (map) {
     if (!navLine) {
       navLine = L.polyline([], { color: "#ffd700", weight: 2, dashArray: "6,6" }).addTo(map);
@@ -984,6 +914,20 @@ function update() {
 
       document.getElementById("sats").textContent  = d.sats_valid ? d.sats + " sats"             : "0 sats";
       document.getElementById("speed").textContent = d.spd_valid  ? d.spd.toFixed(1)  + " km/h" : "-";
+
+      // Sync navigation display from server
+      if (d.nav_active && waypoints.length > 0) {
+        var serverIdx = d.nav_wp_index;
+        if (typeof serverIdx === "number" && serverIdx !== currentWPIndex && serverIdx < waypoints.length) {
+          currentWPIndex = serverIdx;
+          refreshMarkerIcons();
+        }
+        lastTargetDist = d.nav_dist;
+        document.getElementById("target-dist").textContent =
+          d.nav_dist >= 1000 ? (d.nav_dist / 1000).toFixed(2) + " km" : d.nav_dist.toFixed(0) + " m";
+        document.getElementById("target-bear").textContent = bearingLabel(d.nav_bearing);
+        updateWPInfo();
+      }
     })
     .catch(function (err) {
       var conn = document.getElementById("conn");

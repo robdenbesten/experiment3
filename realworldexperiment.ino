@@ -104,7 +104,20 @@ TinyGPSPlus gps;
 HardwareSerial gpsSerial(1);
 WebServer server(80);
 
-// Forward declarations for symbols used in handleTarget() before their definitions.
+// ── Navigation state ──────────────────────────────────────────────────────────
+struct NavWaypoint { double lat; double lon; };
+const int MAX_NAV_WAYPOINTS = 30;
+NavWaypoint navWaypoints[MAX_NAV_WAYPOINTS];
+int  navWPCount        = 0;
+int  navWPIndex        = 0;
+bool navActive         = false;
+double navDistM        = 0.0;
+double navTargetBear   = 0.0;
+int  navBurstRemaining = 0;
+unsigned long lastNavLedAt = 0;
+bool vibrationEnabled  = true;
+
+// Forward declarations for symbols used before their definitions.
 extern float currentTargetHeading;
 extern bool hasTargetHeading;
 extern bool directionLedsActive;
@@ -151,6 +164,46 @@ void handleCalibrate() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Private-Network", "true");
   server.send(200, "application/json", "{\"status\":\"calibrating\"}");
+}
+
+void handleSetWaypoints() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Private-Network", "true");
+
+  int n = server.arg("n").toInt();
+  if (n <= 0) {
+    navWPCount = 0;
+    navWPIndex = 0;
+    navActive  = false;
+    turnOffDirectionLeds();
+    server.send(200, "application/json", "{\"ok\":true,\"active\":false}");
+    return;
+  }
+
+  if (n > MAX_NAV_WAYPOINTS) n = MAX_NAV_WAYPOINTS;
+  for (int i = 0; i < n; i++) {
+    navWaypoints[i].lat = server.arg("lat" + String(i)).toDouble();
+    navWaypoints[i].lon = server.arg("lon" + String(i)).toDouble();
+  }
+  navWPCount        = n;
+  navWPIndex        = 0;
+  navActive         = true;
+  navBurstRemaining = 3;
+  lastNavLedAt      = 0;
+
+  server.send(200, "application/json", "{\"ok\":true,\"active\":true}");
+}
+
+void handleVibration() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Private-Network", "true");
+
+  if (server.hasArg("enabled")) {
+    vibrationEnabled = (server.arg("enabled") != "0");
+    if (!vibrationEnabled) turnOffDirectionLeds();
+  }
+
+  server.send(200, "application/json", "{\"ok\":true}");
 }
 
 void handleTarget() {
@@ -358,13 +411,15 @@ void handleOptions() {
 }
 
 void handleData() {
-  char json[400];
+  char json[512];
   snprintf(json, sizeof(json),
     "{\"fix\":%s,\"lat\":%.6f,\"lon\":%.6f,\"dist\":%.2f,"
     "\"alt_valid\":%s,\"alt\":%.1f,"
     "\"sats_valid\":%s,\"sats\":%d,"
     "\"spd_valid\":%s,\"spd\":%.2f,"
-    "\"heading_valid\":%s,\"heading\":%.1f}",
+    "\"heading_valid\":%s,\"heading\":%.1f,"
+    "\"nav_active\":%s,\"nav_wp_index\":%d,\"nav_wp_count\":%d,"
+    "\"nav_dist\":%.1f,\"nav_bearing\":%.1f}",
     gps.location.isValid() ? "true" : "false",
     gps.location.isValid() ? gps.location.lat() : 0.0,
     gps.location.isValid() ? gps.location.lng() : 0.0,
@@ -376,12 +431,82 @@ void handleData() {
     gps.speed.isValid() ? "true" : "false",
     gps.speed.isValid() ? gps.speed.kmph() : 0.0,
     headingValid ? "true" : "false",
-    headingValid ? headingDeg : 0.0
+    headingValid ? headingDeg : 0.0,
+    navActive ? "true" : "false", navWPIndex, navWPCount,
+    (float)navDistM, (float)navTargetBear
   );
 
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Private-Network", "true");
   server.send(200, "application/json", json);
+}
+
+// ── Navigation math & update ─────────────────────────────────────────────────
+double navHaversineM(double lat1, double lon1, double lat2, double lon2) {
+  const double R = 6371000.0;
+  double dLat = (lat2 - lat1) * PI / 180.0;
+  double dLon = (lon2 - lon1) * PI / 180.0;
+  double a = sin(dLat/2)*sin(dLat/2) +
+             cos(lat1*PI/180.0)*cos(lat2*PI/180.0)*sin(dLon/2)*sin(dLon/2);
+  return R * 2.0 * atan2(sqrt(a), sqrt(1.0 - a));
+}
+
+double navCalcBearing(double lat1, double lon1, double lat2, double lon2) {
+  double dLon = (lon2 - lon1) * PI / 180.0;
+  double y = sin(dLon) * cos(lat2 * PI / 180.0);
+  double x = cos(lat1*PI/180.0)*sin(lat2*PI/180.0) -
+             sin(lat1*PI/180.0)*cos(lat2*PI/180.0)*cos(dLon);
+  double b = atan2(y, x) * 180.0 / PI;
+  return fmod(b + 360.0, 360.0);
+}
+
+// Called every second — updates distance/bearing and handles auto-advance.
+void updateNavState() {
+  if (!navActive || navWPCount == 0) return;
+  if (!gps.location.isValid()) return;
+
+  double lat = gps.location.lat();
+  double lon = gps.location.lng();
+  navDistM      = navHaversineM(lat, lon, navWaypoints[navWPIndex].lat, navWaypoints[navWPIndex].lon);
+  navTargetBear = navCalcBearing(lat, lon, navWaypoints[navWPIndex].lat, navWaypoints[navWPIndex].lon);
+
+  // Auto-advance when within 10 m of current waypoint
+  if (navDistM <= 10.0 && navWPIndex < navWPCount - 1) {
+    navWPIndex++;
+    navBurstRemaining = 3;
+    lastNavLedAt = 0;
+    navDistM      = navHaversineM(lat, lon, navWaypoints[navWPIndex].lat, navWaypoints[navWPIndex].lon);
+    navTargetBear = navCalcBearing(lat, lon, navWaypoints[navWPIndex].lat, navWaypoints[navWPIndex].lon);
+    Serial.printf("Nav: advanced to WP %d, dist=%.1f\n", navWPIndex, navDistM);
+  }
+}
+
+// Called every loop iteration — fires LEDs at the distance-based interval.
+void updateNavLeds() {
+  if (!navActive || navWPCount == 0 || !headingValid || !vibrationEnabled) return;
+
+  unsigned long interval;
+  if (navBurstRemaining > 0) {
+    interval = 1000;
+  } else if (navDistM > 50.0) {
+    interval = 5000;
+  } else if (navDistM <= 10.0) {
+    interval = 1000;
+  } else {
+    // Linear: 5000 ms at 50 m -> 1000 ms at 10 m
+    interval = (unsigned long)(5000.0 - ((50.0 - navDistM) / 40.0) * 4000.0);
+  }
+
+  unsigned long now = millis();
+  if (now - lastNavLedAt >= interval) {
+    lastNavLedAt = now;
+    if (navBurstRemaining > 0) navBurstRemaining--;
+    updateDirectionLedsMode1(headingDeg, (float)navTargetBear);
+    directionLedsActive = true;
+    directionLedsActivatedAt = now;
+    Serial.printf("NavLED: wp=%d dist=%.1f bearing=%.1f interval=%lums\n",
+                  navWPIndex, navDistM, navTargetBear, interval);
+  }
 }
 
 void setup() {
@@ -450,6 +575,8 @@ void setup() {
   server.on("/data", HTTP_OPTIONS, handleOptions);
   server.on("/calibrate", HTTP_GET, handleCalibrate);
   server.on("/target", HTTP_GET, handleTarget);
+  server.on("/waypoints", HTTP_GET, handleSetWaypoints);
+  server.on("/vibration", HTTP_GET, handleVibration);
   server.begin();
   Serial.println("Ready.");
 
@@ -479,6 +606,7 @@ void loop() {
 
   server.handleClient();
   handleDirectionLedsTimeout();
+  updateNavLeds();
 
   while (gpsSerial.available()) {
     gps.encode(gpsSerial.read());
@@ -526,5 +654,6 @@ void loop() {
       prevLon = lon;
       hasPrev = true;
     }
+    updateNavState();
   }
 }
