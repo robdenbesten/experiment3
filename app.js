@@ -814,6 +814,11 @@ function confirmWaypoint() {
 function addWaypoint(lat, lon) {
   waypoints.push({ lat: lat, lon: lon });
   var idx = waypoints.length - 1;
+  // First waypoint becomes the active target — trigger burst
+  if (idx === 0) {
+    waypointBurstRemaining = 3;
+    lastTargetSentAt = 0;
+  }
   var m = L.marker([lat, lon], { icon: wpIcon(idx + 1, waypointState(idx)) }).addTo(map);
   wpMarkers.push(m);
 
