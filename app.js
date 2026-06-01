@@ -12,35 +12,35 @@ app.innerHTML = [
     card("",     "sats",        "Satellites",              "-"),
     card("",     "speed",       "Speed",                   "-"),
     card("",     "heading",     "Compass heading",         "-"),
-    card("full", "wp-info",     "Waypoint",                "No waypoints yet"),
-    card("",     "target-dist", "Distance to waypoint",    "-"),
     card("",     "target-bear", "Direction to waypoint",   "-"),
-    '<div class="card full route-manager">',
-      '<div class="label">Saved routes</div>',
-      '<div class="route-controls">',
-        '<select id="route-select" onchange="loadSelectedRoute()">',
-          '<option value="">No saved routes</option>',
-        '</select>',
-        '<button id="save-route-btn" onclick="saveCurrentRoute()">Save Route</button>',
-        '<button id="delete-route-btn" onclick="deleteSelectedRoute()" aria-label="Delete selected route">Delete</button>',
-      '</div>',
-    '</div>',
-    '<div class="card full btn-row" id="action-row">',
-      '<div class="action-stack">',
-        '<button id="confirm-btn" onclick="confirmWaypoint()">Add</button>',
-        '<button id="place-btn" onclick="togglePlace()">Add Waypoints</button>',
-      '</div>',
-      '<button id="record-btn" onclick="toggleRecording()" aria-pressed="false">&#x25CF; Record</button>',
-      '<button id="clear-btn" onclick="clearWaypoints()" aria-label="Clear waypoints">&#x2715;</button>',
-    '</div>',
-    // Calibration button
-    '<div class="card full" style="text-align:center;margin-top:8px;">',
-      '<button id="calibrate-btn" style="padding:8px 18px;font-size:1em;">Calibrate Magnetometer</button>',
-      '<button id="led-toggle-btn" style="padding:8px 18px;font-size:1em;margin-left:8px;">LEDs: On</button>',
-      '<span id="calib-status" style="margin-left:12px;color:#ffd700;"></span>',
+    card("",     "target-dist", "Distance to waypoint",    "-"),
+    card("",     "wp-info",     "Waypoint",                "No waypoints yet"),
+  '</div>',
+  '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:12px;margin-bottom:12px;">',
+    '<button id="calibrate-btn" style="padding:10px 4px;font-size:0.95em;background:#1976d2;color:#fff;">Calibrate Magnetometer</button>',
+    '<button id="led-toggle-btn" style="padding:10px 4px;font-size:0.95em;">Vibration: On</button>',
+    '<button id="start-test-btn" style="padding:10px 4px;font-size:0.95em;">Start test</button>',
+  '</div>',
+  '<span id="calib-status" style="display:block;margin-bottom:6px;color:#ffd700;"></span>',
+  '<div id="map"></div>',
+  '<div class="card full route-manager" style="margin-top:12px;">',
+    '<div class="label">Saved routes</div>',
+    '<div class="route-controls">',
+      '<select id="route-select" onchange="loadSelectedRoute()">',
+        '<option value="">No saved routes</option>',
+      '</select>',
+      '<button id="save-route-btn" onclick="saveCurrentRoute()">Save Route</button>',
+      '<button id="delete-route-btn" onclick="deleteSelectedRoute()" aria-label="Delete selected route">Delete</button>',
     '</div>',
   '</div>',
-  '<div id="map"></div>'
+  '<div class="card full btn-row" id="action-row" style="margin-top:8px;">',
+    '<div class="action-stack">',
+      '<button id="confirm-btn" onclick="confirmWaypoint()">Add</button>',
+      '<button id="place-btn" onclick="togglePlace()">Add Waypoints</button>',
+    '</div>',
+    '<button id="record-btn" onclick="toggleRecording()" aria-pressed="false">&#x25CF; Record</button>',
+    '<button id="clear-btn" onclick="clearWaypoints()" aria-label="Clear waypoints">&#x2715;</button>',
+  '</div>'
 ].join("");
 
 // ── Magnetometer Calibration ────────────────────────────────────────────────
@@ -48,11 +48,14 @@ var calibrating = false;
 var calibStatus = document.getElementById("calib-status");
 var calibBtn = document.getElementById("calibrate-btn");
 var ledToggleBtn = document.getElementById("led-toggle-btn");
+var startTestBtn = document.getElementById("start-test-btn");
 var directionLedsEnabled = true;
 
 function updateLedToggleButton() {
   if (!ledToggleBtn) return;
-  ledToggleBtn.textContent = directionLedsEnabled ? "LEDs: On" : "LEDs: Off";
+  ledToggleBtn.textContent = directionLedsEnabled ? "Vibration: On" : "Vibration: Off";
+  ledToggleBtn.style.background = directionLedsEnabled ? "#ffd54f" : "";
+  ledToggleBtn.style.color = directionLedsEnabled ? "#1b1b1b" : "";
 }
 
 function disableDirectionLedsOnDevice() {
@@ -72,6 +75,23 @@ function setDirectionLedsEnabled(enabled) {
 if (ledToggleBtn) {
   ledToggleBtn.addEventListener("click", function () {
     setDirectionLedsEnabled(!directionLedsEnabled);
+  });
+}
+
+if (startTestBtn) {
+  startTestBtn.addEventListener("click", function () {
+    setDirectionLedsEnabled(true);
+    if (!recording) {
+      startRecording();
+    }
+    startTestBtn.disabled = true;
+    startTestBtn.textContent = "Test running";
+    calibStatus.textContent = "Test started and recording route data.";
+    setTimeout(function () {
+      if (calibStatus.textContent === "Test started and recording route data.") {
+        calibStatus.textContent = "";
+      }
+    }, 3000);
   });
 }
 
@@ -590,15 +610,24 @@ function deleteSelectedRoute() {
 
 function updateRecordButton() {
   var btn = document.getElementById("record-btn");
+  var startBtn = document.getElementById("start-test-btn");
   if (!btn) return;
   if (recording) {
     btn.textContent = "■ Stop";
     btn.classList.add("recording");
     btn.setAttribute("aria-pressed", "true");
+    if (startBtn) {
+      startBtn.disabled = true;
+      startBtn.textContent = "Test running";
+    }
   } else {
     btn.textContent = "● Record";
     btn.classList.remove("recording");
     btn.setAttribute("aria-pressed", "false");
+    if (startBtn) {
+      startBtn.disabled = false;
+      startBtn.textContent = "Start test";
+    }
   }
 }
 
