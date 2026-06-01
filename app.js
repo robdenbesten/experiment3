@@ -1,6 +1,7 @@
 // The page is served by the ESP32 over HTTP, so window.location.hostname
 // is always the ESP32's IP. No hardcoded address needed.
 var DATA_URL = "http://" + window.location.hostname + "/data";
+var TARGET_URL = "http://" + window.location.hostname + "/target";
 
 // ── Build DOM ─────────────────────────────────────────────────────────────────
 var app = document.getElementById("app");
@@ -89,6 +90,8 @@ var currentHeading = null;
 var targetLat      = null;
 var targetLon      = null;
 var targetHeading  = null;
+var lastTargetSentAt = 0;
+var lastTargetSentHeading = null;
 
 var lastTargetDist = null;
 var recording      = false;
@@ -191,6 +194,36 @@ function destinationPoint(lat, lon, bearingDeg, distanceM) {
   );
 
   return [toDeg(lat2), toDeg(lon2)];
+}
+
+function normalizeDeg(deg) {
+  var d = deg;
+  while (d < 0) d += 360;
+  while (d >= 360) d -= 360;
+  return d;
+}
+
+function sendTargetHeadingToDevice(headingDeg) {
+  if (typeof headingDeg !== "number" || !isFinite(headingDeg)) return;
+
+  var now = Date.now();
+  var normalized = normalizeDeg(headingDeg);
+  var shouldSend = false;
+
+  if (lastTargetSentHeading === null) {
+    shouldSend = true;
+  } else {
+    var diff = Math.abs(normalized - lastTargetSentHeading);
+    diff = Math.min(diff, 360 - diff);
+    if (diff >= 2) shouldSend = true;
+    if (now - lastTargetSentAt >= 1000) shouldSend = true;
+  }
+
+  if (!shouldSend) return;
+
+  lastTargetSentHeading = normalized;
+  lastTargetSentAt = now;
+  fetch(TARGET_URL + "?heading=" + encodeURIComponent(normalized.toFixed(1))).catch(function () {});
 }
 
 function getHeadingConeLatLngs(lat, lon, headingDeg) {
@@ -424,6 +457,7 @@ function clearWaypointsInternal() {
   updateWPInfo();
   document.getElementById("target-dist").textContent = "-";
   document.getElementById("target-bear").textContent = "-";
+  fetch(TARGET_URL + "?clear=1").catch(function () {});
   updateRouteButtons();
 }
 
@@ -769,6 +803,7 @@ function updateNavigation() {
   lastTargetDist = d;
   updateWPInfo();
   var b = bearing(currentLat, currentLon, wp.lat, wp.lon);
+  sendTargetHeadingToDevice(b);
   document.getElementById("target-dist").textContent =
     d >= 1000 ? (d / 1000).toFixed(2) + " km" : d.toFixed(0) + " m";
   document.getElementById("target-bear").textContent = bearingLabel(b);

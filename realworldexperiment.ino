@@ -1,0 +1,523 @@
+// Magnetometer calibration globals
+bool calibrating = false;
+unsigned long calibrationStart = 0;
+float magMin[3] = {10000, 10000, 10000};
+float magMax[3] = {-10000, -10000, -10000};
+const unsigned long calibrationDuration = 10000;
+bool calibrationLoadedFromStorage = false;
+float offX = 0.0f;
+float offY = 0.0f;
+float offZ = 0.0f;
+
+const char* calibrationNs = "magcal";
+const char* keyCalValid = "valid";
+const char* keyOffX = "offX";
+const char* keyOffY = "offY";
+const char* keyOffZ = "offZ";
+
+bool loadCalibrationFromStorage();
+void saveCalibrationToStorage();
+
+void startCalibration() {
+  calibrating = true;
+  calibrationStart = millis();
+  for (int i = 0; i < 3; ++i) {
+    magMin[i] = 10000;
+    magMax[i] = -10000;
+  }
+}
+
+void updateCalibration(const float* xyz) {
+  for (int i = 0; i < 3; ++i) {
+    if (xyz[i] < magMin[i]) magMin[i] = xyz[i];
+    if (xyz[i] > magMax[i]) magMax[i] = xyz[i];
+  }
+}
+
+void finishCalibration() {
+  calibrating = false;
+  offX = (magMin[0] + magMax[0]) / 2.0f;
+  offY = (magMin[1] + magMax[1]) / 2.0f;
+  offZ = (magMin[2] + magMax[2]) / 2.0f;
+  saveCalibrationToStorage();
+  Serial.println("Magnetometer calibration complete.");
+  Serial.print("Min: "); Serial.print(magMin[0]); Serial.print(", "); Serial.print(magMin[1]); Serial.print(", "); Serial.println(magMin[2]);
+  Serial.print("Max: "); Serial.print(magMax[0]); Serial.print(", "); Serial.print(magMax[1]); Serial.print(", "); Serial.println(magMax[2]);
+  Serial.print("Offsets: "); Serial.print(offX); Serial.print(", "); Serial.print(offY); Serial.print(", "); Serial.println(offZ);
+}
+
+#define LED_PIN 21 // Change this if your onboard LED is on a different pin
+
+const int ledPins[] = {7, 13, 12, 11, 10, 9, 8};
+const int numLeds = 7;
+const int ledPwmFreq = 5000;
+const int ledPwmResolution = 8;
+const float ledRingAngles[] = {275, 303, 332, 0, 28, 57, 85};
+
+enum WifiLedStatus {
+  WIFI_LED_CONNECTING,
+  WIFI_LED_CONNECTED,
+  WIFI_LED_FAILED
+};
+
+void setLedColor(WifiLedStatus status, bool blinkState = false) {
+  // For a single-color onboard LED, we simulate colors:
+  // Green = ON, Red = fast blink, Yellow = slow blink
+  // If you have an RGB LED, you can expand this logic.
+  switch (status) {
+    case WIFI_LED_CONNECTED:
+      digitalWrite(LED_PIN, HIGH); // ON (green)
+      break;
+    case WIFI_LED_CONNECTING:
+      digitalWrite(LED_PIN, blinkState ? HIGH : LOW); // Blinking (yellow)
+      break;
+    case WIFI_LED_FAILED:
+      digitalWrite(LED_PIN, LOW); // OFF (red, or always off)
+      break;
+  }
+}
+
+#include <HardwareSerial.h>
+#include <TinyGPSPlus.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ESPmDNS.h>
+#include <Wire.h>
+#include <qmc5883p.h>
+#include <Preferences.h>
+
+const char* WIFI_SSID     = "Gringo Burru";
+const char* WIFI_PASSWORD = "Campina1";
+
+// ================= GPS (ESP32-S3 SuperMini UART) =================
+static const int RX_PIN = 44;
+static const int TX_PIN = 43;
+static const uint32_t GPS_BAUD = 9600;
+
+// ================= MAGNETOMETER =================
+const int SDA_PIN = 2;
+const int SCL_PIN = 3;
+QMC5883P mag;
+Preferences preferences;
+
+TinyGPSPlus gps;
+HardwareSerial gpsSerial(1);
+WebServer server(80);
+
+bool loadCalibrationFromStorage() {
+  bool loaded = false;
+  if (!preferences.begin(calibrationNs, true)) {
+    Serial.println("Calibration storage open (read) failed");
+    return false;
+  }
+
+  bool valid = preferences.getBool(keyCalValid, false);
+  if (valid) {
+    offX = preferences.getFloat(keyOffX, 0.0f);
+    offY = preferences.getFloat(keyOffY, 0.0f);
+    offZ = preferences.getFloat(keyOffZ, 0.0f);
+    loaded = true;
+  }
+
+  preferences.end();
+  return loaded;
+}
+
+void saveCalibrationToStorage() {
+  if (!preferences.begin(calibrationNs, false)) {
+    Serial.println("Calibration storage open (write) failed");
+    return;
+  }
+
+  preferences.putFloat(keyOffX, offX);
+  preferences.putFloat(keyOffY, offY);
+  preferences.putFloat(keyOffZ, offZ);
+  preferences.putBool(keyCalValid, true);
+  preferences.end();
+}
+
+void handleCalibrate() {
+  startCalibration();
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Private-Network", "true");
+  server.send(200, "application/json", "{\"status\":\"calibrating\"}");
+}
+
+void handleTarget() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Private-Network", "true");
+
+  if (server.hasArg("clear") && server.arg("clear") == "1") {
+    hasTargetHeading = false;
+    directionLedsActive = false;
+    turnOffDirectionLeds();
+    server.send(200, "application/json", "{\"ok\":true,\"target_valid\":false}");
+    return;
+  }
+
+  if (!server.hasArg("heading")) {
+    server.send(400, "application/json", "{\"ok\":false,\"error\":\"missing heading\"}");
+    return;
+  }
+
+  float h = server.arg("heading").toFloat();
+  while (h < 0.0f) h += 360.0f;
+  while (h >= 360.0f) h -= 360.0f;
+  currentTargetHeading = h;
+  hasTargetHeading = true;
+
+  char json[96];
+  snprintf(json, sizeof(json), "{\"ok\":true,\"target_valid\":true,\"target_heading\":%.1f}", currentTargetHeading);
+  server.send(200, "application/json", json);
+}
+
+double prevLat = 0, prevLon = 0;
+bool hasPrev = false;
+double lastDist = 0;
+unsigned long lastCalc = 0;
+unsigned long lastHeadingRead = 0;
+
+bool headingValid = false;
+float headingDeg = 0.0f;
+bool magReady = false;
+
+float currentTargetHeading = 0.0f;
+bool hasTargetHeading = false;
+
+const unsigned long directionCheckInterval = 5000;
+const unsigned long directionLedOnDuration = 700;
+unsigned long lastDirectionCheck = 0;
+bool directionLedsActive = false;
+unsigned long directionLedsActivatedAt = 0;
+
+float shortestAngleDifference(float from, float to) {
+  float delta = to - from;
+  while (delta > 180.0f) delta -= 360.0f;
+  while (delta < -180.0f) delta += 360.0f;
+  return delta;
+}
+
+void setLedBrightnessByIndex(int idx, uint8_t brightness) {
+  ledcWrite(ledPins[idx], brightness);
+}
+
+void turnOffDirectionLeds() {
+  for (int i = 0; i < numLeds; i++) {
+    setLedBrightnessByIndex(i, 0);
+  }
+}
+
+float getMode1BlendRangeDeg(int idx) {
+  if (idx <= 0) {
+    return fabsf(shortestAngleDifference(ledRingAngles[0], ledRingAngles[1]));
+  }
+
+  if (idx >= numLeds - 1) {
+    return fabsf(shortestAngleDifference(ledRingAngles[numLeds - 2], ledRingAngles[numLeds - 1]));
+  }
+
+  float prevGap = fabsf(shortestAngleDifference(ledRingAngles[idx - 1], ledRingAngles[idx]));
+  float nextGap = fabsf(shortestAngleDifference(ledRingAngles[idx], ledRingAngles[idx + 1]));
+  return fminf(prevGap, nextGap);
+}
+
+float mode1ScaleForCircle(float circleAbsAngle, float target, int idx) {
+  float signedDelta = shortestAngleDifference(circleAbsAngle, target);
+
+  // Keep left-most circle active in the same extra range used in Experiment 2.
+  if (idx == 0 && signedDelta >= -90.0f && signedDelta <= 0.0f) {
+    return 1.0f;
+  }
+
+  // Keep right-most circle active in the same extra range used in Experiment 2.
+  if (idx == 6 && signedDelta >= 0.0f && signedDelta <= 90.0f) {
+    return 1.0f;
+  }
+
+  float diff = fabsf(signedDelta);
+  if (diff < 5.0f) {
+    return 1.0f;
+  }
+
+  float blendRange = getMode1BlendRangeDeg(idx);
+  if (diff >= blendRange) {
+    return 0.0f;
+  }
+
+  return 1.0f - diff / blendRange;
+}
+
+uint8_t scaleToBrightness(float t) {
+  if (t < 0.0f) t = 0.0f;
+  if (t > 1.0f) t = 1.0f;
+
+  const float logCurveStrength = 10.444f;
+  float curved = log1pf(logCurveStrength * t) / log1pf(logCurveStrength);
+  return (uint8_t)(curved * 255.0f);
+}
+
+void updateDirectionLedsMode1(float heading, float target) {
+  int exclusiveIdx = -1;
+  for (int i = 0; i < numLeds; i++) {
+    float absAngle = fmodf(ledRingAngles[i] + fmodf(heading, 360.0f) + 360.0f, 360.0f);
+    if (fabsf(shortestAngleDifference(absAngle, target)) < 5.0f) {
+      exclusiveIdx = i;
+      break;
+    }
+  }
+
+  for (int i = 0; i < numLeds; i++) {
+    float scale;
+    if (exclusiveIdx != -1) {
+      scale = (i == exclusiveIdx) ? 1.0f : 0.0f;
+    } else {
+      float absAngle = fmodf(ledRingAngles[i] + fmodf(heading, 360.0f) + 360.0f, 360.0f);
+      scale = mode1ScaleForCircle(absAngle, target, i);
+    }
+
+    setLedBrightnessByIndex(i, scaleToBrightness(scale));
+  }
+}
+
+void handleDirectionLedsTimeout() {
+  if (!directionLedsActive) return;
+  if (millis() - directionLedsActivatedAt >= directionLedOnDuration) {
+    turnOffDirectionLeds();
+    directionLedsActive = false;
+  }
+}
+
+bool isCalibrationValid() {
+  for (int i = 0; i < 3; ++i) {
+    if (magMin[i] == 10000 || magMax[i] == -10000 || magMin[i] >= magMax[i]) return false;
+    if ((magMax[i] - magMin[i]) < 0.1) return false;
+  }
+  return true;
+}
+
+bool calculateHeading(const float* xyz, float& outHeadingDeg) {
+  if (calibrating) return false;
+
+  float x = xyz[0] - offX;
+  float y = xyz[1] - offY;
+
+  if (x == 0.0f && y == 0.0f) return false;
+
+  float heading = atan2(y, x) * 180.0f / PI;
+  if (heading < 0.0f) heading += 360.0f;
+
+  outHeadingDeg = heading;
+  return true;
+}
+
+const char ROOT_HTML[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GPS Tracker</title>
+  <link rel="stylesheet" href="https://robdenbesten.github.io/experiment3/style.css">
+</head>
+<body>
+  <div id="app"><p style="font-family:sans-serif;color:#eee;background:#1a1a2e;margin:0;padding:16px">Loading...</p></div>
+  <script src="https://robdenbesten.github.io/experiment3/app.js"></script>
+</body>
+</html>
+)rawliteral";
+
+void handleRoot() {
+  server.sendHeader("Cache-Control", "no-store");
+  server.send_P(200, "text/html", ROOT_HTML);
+}
+
+void handleOptions() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  server.sendHeader("Access-Control-Allow-Private-Network", "true");
+  server.send(204);
+}
+
+void handleData() {
+  char json[400];
+  snprintf(json, sizeof(json),
+    "{\"fix\":%s,\"lat\":%.6f,\"lon\":%.6f,\"dist\":%.2f,"
+    "\"alt_valid\":%s,\"alt\":%.1f,"
+    "\"sats_valid\":%s,\"sats\":%d,"
+    "\"spd_valid\":%s,\"spd\":%.2f,"
+    "\"heading_valid\":%s,\"heading\":%.1f}",
+    gps.location.isValid() ? "true" : "false",
+    gps.location.isValid() ? gps.location.lat() : 0.0,
+    gps.location.isValid() ? gps.location.lng() : 0.0,
+    lastDist,
+    gps.altitude.isValid() ? "true" : "false",
+    gps.altitude.isValid() ? gps.altitude.meters() : 0.0,
+    gps.satellites.isValid() ? "true" : "false",
+    gps.satellites.isValid() ? (int)gps.satellites.value() : 0,
+    gps.speed.isValid() ? "true" : "false",
+    gps.speed.isValid() ? gps.speed.kmph() : 0.0,
+    headingValid ? "true" : "false",
+    headingValid ? headingDeg : 0.0
+  );
+
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Private-Network", "true");
+  server.send(200, "application/json", json);
+}
+
+void setup() {
+  pinMode(LED_PIN, OUTPUT);
+  setLedColor(WIFI_LED_CONNECTING, false);
+
+  for (int i = 0; i < numLeds; i++) {
+    ledcAttach(ledPins[i], ledPwmFreq, ledPwmResolution);
+    setLedBrightnessByIndex(i, 0);
+  }
+
+  Serial.begin(115200);
+  delay(100);
+
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(100000);
+
+  magReady = mag.begin();
+  if (magReady) {
+    Serial.println("Magnetometer initialized (QMC5883P) on SDA=2, SCL=3");
+    calibrationLoadedFromStorage = loadCalibrationFromStorage();
+    if (calibrationLoadedFromStorage) {
+      calibrating = false;
+      Serial.printf("Loaded calibration offsets: X=%.2f, Y=%.2f, Z=%.2f\n", offX, offY, offZ);
+    } else {
+      startCalibration();
+      Serial.println("No saved calibration found, starting 10s calibration. Rotate sensor in all directions.");
+    }
+  } else {
+    Serial.println("Warning: magnetometer init failed. Heading updates disabled.");
+  }
+
+  WiFi.persistent(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.mode(WIFI_STA);
+  delay(100);
+
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("Connecting");
+
+  unsigned long connectStart = millis();
+  bool ledBlink = false;
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+    ledBlink = !ledBlink;
+    setLedColor(WIFI_LED_CONNECTING, ledBlink);
+
+    if (millis() - connectStart > 15000) {
+      Serial.println("\nWiFi connection failed!");
+      setLedColor(WIFI_LED_FAILED);
+      break;
+    }
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("\nIP: ");
+    Serial.println(WiFi.localIP());
+    Serial.print("Open on phone: http://");
+    Serial.println(WiFi.localIP());
+    setLedColor(WIFI_LED_CONNECTED);
+  }
+
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/data", HTTP_GET, handleData);
+  server.on("/data", HTTP_OPTIONS, handleOptions);
+  server.on("/calibrate", HTTP_GET, handleCalibrate);
+  server.on("/target", HTTP_GET, handleTarget);
+  server.begin();
+  Serial.println("Ready.");
+
+  gpsSerial.begin(GPS_BAUD, SERIAL_8N1, RX_PIN, TX_PIN);
+  Serial.println("GPS UART initialized on RX=44, TX=43");
+}
+
+void loop() {
+  static unsigned long lastBlink = 0;
+  static bool blinkState = false;
+  static float lastMagXYZ[3] = {0, 0, 0};
+  bool magReadSuccess = false;
+
+  if (WiFi.status() != WL_CONNECTED) {
+    if (millis() - lastBlink > 500) {
+      blinkState = !blinkState;
+      setLedColor(WIFI_LED_CONNECTING, blinkState);
+      lastBlink = millis();
+    }
+    turnOffDirectionLeds();
+    directionLedsActive = false;
+    delay(10);
+    return;
+  } else {
+    setLedColor(WIFI_LED_CONNECTED);
+  }
+
+  server.handleClient();
+  handleDirectionLedsTimeout();
+
+  while (gpsSerial.available()) {
+    gps.encode(gpsSerial.read());
+  }
+
+  if (millis() - lastHeadingRead >= 500) {
+    lastHeadingRead = millis();
+
+    if (magReady) {
+      magReadSuccess = mag.readXYZ(lastMagXYZ);
+      if (magReadSuccess) {
+        if (calibrating) {
+          updateCalibration(lastMagXYZ);
+          if (millis() - calibrationStart >= calibrationDuration) {
+            finishCalibration();
+          }
+        }
+
+        float h = 0.0f;
+        headingValid = calculateHeading(lastMagXYZ, h);
+        if (headingValid) headingDeg = h;
+
+        if (!calibrating && headingValid && hasTargetHeading) {
+          unsigned long now = millis();
+          if (now - lastDirectionCheck >= directionCheckInterval) {
+            float signedDelta = shortestAngleDifference(headingDeg, currentTargetHeading);
+            updateDirectionLedsMode1(headingDeg, currentTargetHeading);
+            directionLedsActive = true;
+            directionLedsActivatedAt = now;
+            lastDirectionCheck = now;
+            Serial.printf("Mode1 LED update. Heading=%.1f Target=%.1f Delta=%.1f\n", headingDeg, currentTargetHeading, signedDelta);
+          }
+        }
+
+        Serial.print("Heading: ");
+        Serial.println(headingDeg);
+      } else {
+        headingValid = false;
+      }
+    } else {
+      headingValid = false;
+    }
+  }
+
+  if (millis() - lastCalc >= 1000) {
+    lastCalc = millis();
+
+    if (gps.location.isValid()) {
+      double lat = gps.location.lat();
+      double lon = gps.location.lng();
+
+      if (hasPrev) {
+        lastDist = TinyGPSPlus::distanceBetween(prevLat, prevLon, lat, lon);
+      }
+
+      prevLat = lat;
+      prevLon = lon;
+      hasPrev = true;
+    }
+  }
+}
