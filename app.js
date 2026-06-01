@@ -265,13 +265,13 @@ function sendTargetHeadingToDevice(headingDeg, dist) {
   var interval;
   if (waypointBurstRemaining > 0) {
     interval = 1000;
-  } else if (typeof dist !== "number" || dist > 30) {
+  } else if (typeof dist !== "number" || dist > 50) {
     interval = 5000;
   } else if (dist <= 10) {
     interval = 2000;
   } else {
-    // Linear: 5000 ms at 30 m -> 2000 ms at 10 m
-    interval = 5000 - ((30 - dist) / 20) * 3000;
+    // Linear: 5000 ms at 50 m -> 2000 ms at 10 m
+    interval = 5000 - ((50 - dist) / 40) * 3000;
   }
 
   if (lastTargetSentHeading === null) {

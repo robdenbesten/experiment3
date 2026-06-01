@@ -108,7 +108,11 @@ WebServer server(80);
 extern float currentTargetHeading;
 extern bool hasTargetHeading;
 extern bool directionLedsActive;
+extern bool headingValid;
+extern float headingDeg;
+extern unsigned long directionLedsActivatedAt;
 void turnOffDirectionLeds();
+void updateDirectionLedsMode1(float heading, float target);
 
 bool loadCalibrationFromStorage() {
   bool loaded = false;
@@ -172,6 +176,14 @@ void handleTarget() {
   currentTargetHeading = h;
   hasTargetHeading = true;
   Serial.printf("Target heading received: %.1f\n", currentTargetHeading);
+
+  // Trigger LED pulse immediately on each incoming heading update.
+  // The JS controls the send rate, so the firmware just responds to each request.
+  if (!calibrating && headingValid) {
+    updateDirectionLedsMode1(headingDeg, currentTargetHeading);
+    directionLedsActive = true;
+    directionLedsActivatedAt = millis();
+  }
 
   char json[96];
   snprintf(json, sizeof(json), "{\"ok\":true,\"target_valid\":true,\"target_heading\":%.1f}", currentTargetHeading);
