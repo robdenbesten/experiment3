@@ -17,7 +17,7 @@ app.innerHTML = [
     card("",     "wp-info",     "Waypoint",                "No waypoints yet"),
   '</div>',
   '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:12px;margin-bottom:12px;">',
-    '<button id="calibrate-btn" style="padding:10px 4px;font-size:0.95em;background:#1976d2;color:#fff;">Calibrate Magnetometer</button>',
+    '<button id="calibrate-btn" style="padding:10px 4px;font-size:0.95em;background:#1976d2;color:#fff;">Calibrate</button>',
     '<button id="led-toggle-btn" style="padding:10px 4px;font-size:0.95em;">Vibration: On</button>',
     '<button id="start-test-btn" style="padding:10px 4px;font-size:0.95em;">Start test</button>',
   '</div>',
@@ -141,6 +141,7 @@ var targetLon      = null;
 var targetHeading  = null;
 var lastTargetSentAt = 0;
 var lastTargetSentHeading = null;
+var waypointBurstRemaining = 0;
 
 var lastTargetDist = null;
 var recording      = false;
@@ -252,7 +253,7 @@ function normalizeDeg(deg) {
   return d;
 }
 
-function sendTargetHeadingToDevice(headingDeg) {
+function sendTargetHeadingToDevice(headingDeg, dist) {
   if (!directionLedsEnabled) return;
   if (typeof headingDeg !== "number" || !isFinite(headingDeg)) return;
 
@@ -260,16 +261,31 @@ function sendTargetHeadingToDevice(headingDeg) {
   var normalized = normalizeDeg(headingDeg);
   var shouldSend = false;
 
+  // Determine the send interval based on burst state and distance
+  var interval;
+  if (waypointBurstRemaining > 0) {
+    interval = 1000;
+  } else if (typeof dist !== "number" || dist > 30) {
+    interval = 5000;
+  } else if (dist <= 10) {
+    interval = 2000;
+  } else {
+    // Linear: 5000 ms at 30 m -> 2000 ms at 10 m
+    interval = 5000 - ((30 - dist) / 20) * 3000;
+  }
+
   if (lastTargetSentHeading === null) {
     shouldSend = true;
   } else {
     var diff = Math.abs(normalized - lastTargetSentHeading);
     diff = Math.min(diff, 360 - diff);
     if (diff >= 2) shouldSend = true;
-    if (now - lastTargetSentAt >= 1000) shouldSend = true;
+    if (now - lastTargetSentAt >= interval) shouldSend = true;
   }
 
   if (!shouldSend) return;
+
+  if (waypointBurstRemaining > 0) waypointBurstRemaining--;
 
   lastTargetSentHeading = normalized;
   lastTargetSentAt = now;
@@ -494,6 +510,7 @@ function clearWaypointsInternal() {
   waypoints = [];
   currentWPIndex = 0;
   lastTargetDist = null;
+  waypointBurstRemaining = 0;
 
   if (routeLine) {
     map.removeLayer(routeLine);
@@ -634,19 +651,19 @@ function updateRecordButton() {
 function updateRecordLine() {
   if (!map || !recording || recordingPoints.length < 2) return;
   if (!recordingLine) {
-    recordingLine = L.polyline(recordingPoints, {
+    recordingLine = L.polyline(recordingPoints.map(function(p){return[p[0],p[1]];}), {
       color: "#c9a400",
       weight: 3,
       opacity: 0.85
     }).addTo(map);
   } else {
-    recordingLine.setLatLngs(recordingPoints);
+    recordingLine.setLatLngs(recordingPoints.map(function(p){return[p[0],p[1]];}));
   }
 }
 
 function addRecordPoint(lat, lon) {
   if (!recording) return;
-  recordingPoints.push([lat, lon]);
+  recordingPoints.push([lat, lon, new Date().toISOString()]);
   updateRecordLine();
 }
 
@@ -662,7 +679,9 @@ function downloadRecording(rec) {
         type: "Feature",
         properties: {
           startedAt: rec.startedAt,
-          points: rec.points.length
+          endedAt: rec.endedAt,
+          points: rec.points.length,
+          coordTimes: rec.points.map(function (p) { return p[2] || null; })
         },
         geometry: {
           type: "LineString",
@@ -854,6 +873,8 @@ function updateNavigation() {
   // Auto-advance when within 10 m of current waypoint
   if (d <= 10 && currentWPIndex < waypoints.length - 1) {
     currentWPIndex++;
+    waypointBurstRemaining = 3;
+    lastTargetSentAt = 0;
     refreshMarkerIcons();
     updateWPInfo();
     wp = waypoints[currentWPIndex];
@@ -862,7 +883,7 @@ function updateNavigation() {
   lastTargetDist = d;
   updateWPInfo();
   var b = bearing(currentLat, currentLon, wp.lat, wp.lon);
-  sendTargetHeadingToDevice(b);
+  sendTargetHeadingToDevice(b, d);
   document.getElementById("target-dist").textContent =
     d >= 1000 ? (d / 1000).toFixed(2) + " km" : d.toFixed(0) + " m";
   document.getElementById("target-bear").textContent = bearingLabel(b);
