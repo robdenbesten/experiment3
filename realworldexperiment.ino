@@ -501,25 +501,6 @@ void loop() {
         headingValid = calculateHeading(lastMagXYZ, h);
         if (headingValid) headingDeg = h;
 
-        unsigned long now = millis();
-        if (now - lastDirectionCheck >= directionCheckInterval) {
-          lastDirectionCheck = now;
-
-          if (calibrating) {
-            Serial.println("Mode1 LED skipped: calibration in progress");
-          } else if (!headingValid) {
-            Serial.println("Mode1 LED skipped: heading invalid");
-          } else if (!hasTargetHeading) {
-            Serial.println("Mode1 LED skipped: no target heading received yet");
-          } else {
-            float signedDelta = shortestAngleDifference(headingDeg, currentTargetHeading);
-            updateDirectionLedsMode1(headingDeg, currentTargetHeading);
-            directionLedsActive = true;
-            directionLedsActivatedAt = now;
-            Serial.printf("Mode1 LED update. Heading=%.1f Target=%.1f Delta=%.1f\n", headingDeg, currentTargetHeading, signedDelta);
-          }
-        }
-
         Serial.print("Heading: ");
         Serial.println(headingDeg);
       } else {

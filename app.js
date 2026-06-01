@@ -268,10 +268,10 @@ function sendTargetHeadingToDevice(headingDeg, dist) {
   } else if (typeof dist !== "number" || dist > 50) {
     interval = 5000;
   } else if (dist <= 10) {
-    interval = 2000;
+    interval = 1000;
   } else {
-    // Linear: 5000 ms at 50 m -> 2000 ms at 10 m
-    interval = 5000 - ((50 - dist) / 40) * 3000;
+    // Linear: 5000 ms at 50 m -> 1000 ms at 10 m
+    interval = 5000 - ((50 - dist) / 40) * 4000;
   }
 
   if (lastTargetSentHeading === null) {
