@@ -36,6 +36,7 @@ app.innerHTML = [
     // Calibration button
     '<div class="card full" style="text-align:center;margin-top:8px;">',
       '<button id="calibrate-btn" style="padding:8px 18px;font-size:1em;">Calibrate Magnetometer</button>',
+      '<button id="led-toggle-btn" style="padding:8px 18px;font-size:1em;margin-left:8px;">LEDs: On</button>',
       '<span id="calib-status" style="margin-left:12px;color:#ffd700;"></span>',
     '</div>',
   '</div>',
@@ -46,6 +47,35 @@ app.innerHTML = [
 var calibrating = false;
 var calibStatus = document.getElementById("calib-status");
 var calibBtn = document.getElementById("calibrate-btn");
+var ledToggleBtn = document.getElementById("led-toggle-btn");
+var directionLedsEnabled = true;
+
+function updateLedToggleButton() {
+  if (!ledToggleBtn) return;
+  ledToggleBtn.textContent = directionLedsEnabled ? "LEDs: On" : "LEDs: Off";
+}
+
+function disableDirectionLedsOnDevice() {
+  fetch(TARGET_URL + "?clear=1").catch(function () {});
+}
+
+function setDirectionLedsEnabled(enabled) {
+  directionLedsEnabled = enabled;
+  updateLedToggleButton();
+  if (!directionLedsEnabled) {
+    lastTargetSentHeading = null;
+    lastTargetSentAt = 0;
+    disableDirectionLedsOnDevice();
+  }
+}
+
+if (ledToggleBtn) {
+  ledToggleBtn.addEventListener("click", function () {
+    setDirectionLedsEnabled(!directionLedsEnabled);
+  });
+}
+
+updateLedToggleButton();
 if (calibBtn) {
   calibBtn.addEventListener("click", function() {
     if (calibrating) return;
@@ -203,6 +233,7 @@ function normalizeDeg(deg) {
 }
 
 function sendTargetHeadingToDevice(headingDeg) {
+  if (!directionLedsEnabled) return;
   if (typeof headingDeg !== "number" || !isFinite(headingDeg)) return;
 
   var now = Date.now();
@@ -456,7 +487,7 @@ function clearWaypointsInternal() {
   updateWPInfo();
   document.getElementById("target-dist").textContent = "-";
   document.getElementById("target-bear").textContent = "-";
-  fetch(TARGET_URL + "?clear=1").catch(function () {});
+  disableDirectionLedsOnDevice();
   updateRouteButtons();
 }
 
