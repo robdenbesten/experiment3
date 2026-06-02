@@ -118,8 +118,6 @@ unsigned long lastNavLedAt = 0;
 bool vibrationEnabled  = true;
 
 // Forward declarations for symbols used before their definitions.
-extern float currentTargetHeading;
-extern bool hasTargetHeading;
 extern bool directionLedsActive;
 extern bool headingValid;
 extern float headingDeg;
@@ -206,43 +204,6 @@ void handleVibration() {
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
-void handleTarget() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.sendHeader("Access-Control-Allow-Private-Network", "true");
-
-  if (server.hasArg("clear") && server.arg("clear") == "1") {
-    hasTargetHeading = false;
-    directionLedsActive = false;
-    turnOffDirectionLeds();
-    server.send(200, "application/json", "{\"ok\":true,\"target_valid\":false}");
-    return;
-  }
-
-  if (!server.hasArg("heading")) {
-    server.send(400, "application/json", "{\"ok\":false,\"error\":\"missing heading\"}");
-    return;
-  }
-
-  float h = server.arg("heading").toFloat();
-  while (h < 0.0f) h += 360.0f;
-  while (h >= 360.0f) h -= 360.0f;
-  currentTargetHeading = h;
-  hasTargetHeading = true;
-  Serial.printf("Target heading received: %.1f\n", currentTargetHeading);
-
-  // Trigger LED pulse immediately on each incoming heading update.
-  // The JS controls the send rate, so the firmware just responds to each request.
-  if (!calibrating && headingValid) {
-    updateDirectionLedsMode1(headingDeg, currentTargetHeading);
-    directionLedsActive = true;
-    directionLedsActivatedAt = millis();
-  }
-
-  char json[96];
-  snprintf(json, sizeof(json), "{\"ok\":true,\"target_valid\":true,\"target_heading\":%.1f}", currentTargetHeading);
-  server.send(200, "application/json", json);
-}
-
 double prevLat = 0, prevLon = 0;
 bool hasPrev = false;
 double lastDist = 0;
@@ -253,14 +214,11 @@ bool headingValid = false;
 float headingDeg = 0.0f;
 bool magReady = false;
 
-float currentTargetHeading = 0.0f;
-bool hasTargetHeading = false;
-
-const unsigned long directionCheckInterval = 5000;
 const unsigned long directionLedOnDuration = 300;
-unsigned long lastDirectionCheck = 0;
 bool directionLedsActive = false;
 unsigned long directionLedsActivatedAt = 0;
+bool wpConfirmFlashActive = false;
+unsigned long wpConfirmFlashAt = 0;
 
 float shortestAngleDifference(float from, float to) {
   float delta = to - from;
@@ -353,18 +311,30 @@ void updateDirectionLedsMode1(float heading, float target) {
 
 void handleDirectionLedsTimeout() {
   if (!directionLedsActive) return;
+  if (wpConfirmFlashActive) return;  // confirmation flash takes priority
   if (millis() - directionLedsActivatedAt >= directionLedOnDuration) {
     turnOffDirectionLeds();
     directionLedsActive = false;
   }
 }
 
-bool isCalibrationValid() {
-  for (int i = 0; i < 3; ++i) {
-    if (magMin[i] == 10000 || magMax[i] == -10000 || magMin[i] >= magMax[i]) return false;
-    if ((magMax[i] - magMin[i]) < 0.1) return false;
+void triggerWPConfirmFlash() {
+  turnOffDirectionLeds();
+  // Left (index 0 / 275°), Middle (index 3 / 0°), Right (index 6 / 85°)
+  setLedBrightnessByIndex(0, 255);
+  setLedBrightnessByIndex(3, 255);
+  setLedBrightnessByIndex(6, 255);
+  wpConfirmFlashActive = true;
+  wpConfirmFlashAt = millis();
+  directionLedsActive = false;
+}
+
+void handleWPConfirmFlashTimeout() {
+  if (!wpConfirmFlashActive) return;
+  if (millis() - wpConfirmFlashAt >= 500) {
+    turnOffDirectionLeds();
+    wpConfirmFlashActive = false;
   }
-  return true;
 }
 
 bool calculateHeading(const float* xyz, float& outHeadingDeg) {
@@ -470,20 +440,28 @@ void updateNavState() {
   navDistM      = navHaversineM(lat, lon, navWaypoints[navWPIndex].lat, navWaypoints[navWPIndex].lon);
   navTargetBear = navCalcBearing(lat, lon, navWaypoints[navWPIndex].lat, navWaypoints[navWPIndex].lon);
 
-  // Auto-advance when within 10 m of current waypoint
-  if (navDistM <= 10.0 && navWPIndex < navWPCount - 1) {
+  // Auto-advance when within 20 m of current waypoint
+  if (navDistM <= 20.0 && navWPIndex < navWPCount - 1) {
+    triggerWPConfirmFlash();
     navWPIndex++;
     navBurstRemaining = 3;
     lastNavLedAt = 0;
     navDistM      = navHaversineM(lat, lon, navWaypoints[navWPIndex].lat, navWaypoints[navWPIndex].lon);
     navTargetBear = navCalcBearing(lat, lon, navWaypoints[navWPIndex].lat, navWaypoints[navWPIndex].lon);
     Serial.printf("Nav: advanced to WP %d, dist=%.1f\n", navWPIndex, navDistM);
+  } else if (navDistM <= 20.0 && navWPIndex == navWPCount - 1) {
+    // Last waypoint reached — stop navigation
+    triggerWPConfirmFlash();
+    navActive = false;
+    navBurstRemaining = 0;
+    Serial.println("Nav: last waypoint reached, navigation stopped");
   }
 }
 
 // Called every loop iteration — fires LEDs at the distance-based interval.
 void updateNavLeds() {
   if (!navActive || navWPCount == 0 || !headingValid || !vibrationEnabled) return;
+  if (wpConfirmFlashActive) return;  // confirmation flash takes priority
 
   unsigned long interval;
   if (navBurstRemaining > 0) {
@@ -574,7 +552,6 @@ void setup() {
   server.on("/data", HTTP_GET, handleData);
   server.on("/data", HTTP_OPTIONS, handleOptions);
   server.on("/calibrate", HTTP_GET, handleCalibrate);
-  server.on("/target", HTTP_GET, handleTarget);
   server.on("/waypoints", HTTP_GET, handleSetWaypoints);
   server.on("/vibration", HTTP_GET, handleVibration);
   server.begin();
@@ -606,6 +583,7 @@ void loop() {
 
   server.handleClient();
   handleDirectionLedsTimeout();
+  handleWPConfirmFlashTimeout();
   updateNavLeds();
 
   while (gpsSerial.available()) {
