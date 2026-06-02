@@ -615,7 +615,16 @@ function updateRecordLine() {
 
 function addRecordPoint(lat, lon) {
   if (!recording) return;
-  recordingPoints.push([lat, lon, new Date().toISOString()]);
+  // Only log when the GPS actually gives a new position (~1 Hz)
+  if (recordingPoints.length > 0) {
+    var last = recordingPoints[recordingPoints.length - 1];
+    if (last[0] === lat && last[1] === lon) return;
+  }
+  var wpLat = (waypoints.length > 0 && currentWPIndex < waypoints.length)
+    ? waypoints[currentWPIndex].lat : null;
+  var wpLon = (waypoints.length > 0 && currentWPIndex < waypoints.length)
+    ? waypoints[currentWPIndex].lon : null;
+  recordingPoints.push([lat, lon, new Date().toISOString(), wpLat, wpLon]);
   updateRecordLine();
 }
 
@@ -633,7 +642,10 @@ function downloadRecording(rec) {
           startedAt: rec.startedAt,
           endedAt: rec.endedAt,
           points: rec.points.length,
-          coordTimes: rec.points.map(function (p) { return p[2] || null; })
+          coordTimes: rec.points.map(function (p) { return p[2] || null; }),
+          coordTargets: rec.points.map(function (p) {
+            return (p[3] !== null && p[3] !== undefined) ? [p[4], p[3]] : null;
+          })
         },
         geometry: {
           type: "LineString",
