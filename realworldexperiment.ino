@@ -186,7 +186,7 @@ void handleSetWaypoints() {
   navWPCount        = n;
   navWPIndex        = 0;
   navActive         = true;
-  navBurstRemaining = 3;
+  navBurstRemaining = 0;
   lastNavLedAt      = 0;
 
   server.send(200, "application/json", "{\"ok\":true,\"active\":true}");
@@ -217,7 +217,10 @@ bool magReady = false;
 const unsigned long directionLedOnDuration = 300;
 bool directionLedsActive = false;
 unsigned long directionLedsActivatedAt = 0;
+unsigned long activeDirectionLedOnDuration = 300; // overridden to 600 ms for first flash after WP advance
+bool navFirstFlashPending = false;
 bool wpConfirmFlashActive = false;
+int  wpConfirmFlashStep = 0;   // 0-9: even = ON, odd = OFF (5 pulses × 50 ms)
 unsigned long wpConfirmFlashAt = 0;
 
 float shortestAngleDifference(float from, float to) {
@@ -312,7 +315,7 @@ void updateDirectionLedsMode1(float heading, float target) {
 void handleDirectionLedsTimeout() {
   if (!directionLedsActive) return;
   if (wpConfirmFlashActive) return;  // confirmation flash takes priority
-  if (millis() - directionLedsActivatedAt >= directionLedOnDuration) {
+  if (millis() - directionLedsActivatedAt >= activeDirectionLedOnDuration) {
     turnOffDirectionLeds();
     directionLedsActive = false;
   }
@@ -320,20 +323,35 @@ void handleDirectionLedsTimeout() {
 
 void triggerWPConfirmFlash() {
   turnOffDirectionLeds();
-  // Left (index 0 / 275°), Middle (index 3 / 0°), Right (index 6 / 85°)
+  // First pulse — turn on immediately
   setLedBrightnessByIndex(0, 255);
   setLedBrightnessByIndex(3, 255);
   setLedBrightnessByIndex(6, 255);
   wpConfirmFlashActive = true;
-  wpConfirmFlashAt = millis();
-  directionLedsActive = false;
+  wpConfirmFlashStep   = 0;
+  wpConfirmFlashAt     = millis();
+  directionLedsActive  = false;
 }
 
 void handleWPConfirmFlashTimeout() {
   if (!wpConfirmFlashActive) return;
-  if (millis() - wpConfirmFlashAt >= 500) {
+  if (millis() - wpConfirmFlashAt < 50) return;  // 5 pulses × 50 ms = 500 ms total
+
+  wpConfirmFlashAt = millis();
+  wpConfirmFlashStep++;
+
+  if (wpConfirmFlashStep >= 10) {      // 5 on + 5 off phases done
     turnOffDirectionLeds();
     wpConfirmFlashActive = false;
+    return;
+  }
+
+  if (wpConfirmFlashStep % 2 == 0) {  // even step = ON
+    setLedBrightnessByIndex(0, 255);
+    setLedBrightnessByIndex(3, 255);
+    setLedBrightnessByIndex(6, 255);
+  } else {                            // odd step = OFF
+    turnOffDirectionLeds();
   }
 }
 
@@ -440,16 +458,17 @@ void updateNavState() {
   navDistM      = navHaversineM(lat, lon, navWaypoints[navWPIndex].lat, navWaypoints[navWPIndex].lon);
   navTargetBear = navCalcBearing(lat, lon, navWaypoints[navWPIndex].lat, navWaypoints[navWPIndex].lon);
 
-  // Auto-advance when within 20 m of current waypoint
-  if (navDistM <= 20.0 && navWPIndex < navWPCount - 1) {
+  // Auto-advance when within 10 m of current waypoint
+  if (navDistM <= 10.0 && navWPIndex < navWPCount - 1) {
     triggerWPConfirmFlash();
     navWPIndex++;
-    navBurstRemaining = 3;
+    navBurstRemaining = 0;
+    navFirstFlashPending = true;
     lastNavLedAt = 0;
     navDistM      = navHaversineM(lat, lon, navWaypoints[navWPIndex].lat, navWaypoints[navWPIndex].lon);
     navTargetBear = navCalcBearing(lat, lon, navWaypoints[navWPIndex].lat, navWaypoints[navWPIndex].lon);
     Serial.printf("Nav: advanced to WP %d, dist=%.1f\n", navWPIndex, navDistM);
-  } else if (navDistM <= 20.0 && navWPIndex == navWPCount - 1) {
+  } else if (navDistM <= 10.0 && navWPIndex == navWPCount - 1) {
     // Last waypoint reached — stop navigation
     triggerWPConfirmFlash();
     navActive = false;
@@ -479,6 +498,8 @@ void updateNavLeds() {
   if (now - lastNavLedAt >= interval) {
     lastNavLedAt = now;
     if (navBurstRemaining > 0) navBurstRemaining--;
+    activeDirectionLedOnDuration = navFirstFlashPending ? 600UL : directionLedOnDuration;
+    navFirstFlashPending = false;
     updateDirectionLedsMode1(headingDeg, (float)navTargetBear);
     directionLedsActive = true;
     directionLedsActivatedAt = now;

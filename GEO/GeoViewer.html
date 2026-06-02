@@ -141,7 +141,7 @@
 <div id="legend">
   <h4>Speed (km/h)</h4>
   <div class="legend-gradient"></div>
-  <div class="legend-labels"><span>Slow</span><span>Fast</span></div>
+  <div class="legend-labels"><span>0 km/h</span><span id="legend-max">≥10 km/h</span></div>
 </div>
 
 <div id="tooltip-box" id="tooltip-box"></div>
@@ -159,6 +159,7 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let trackLayers = [];
+let wpLayers    = [];
 const tooltip = document.getElementById('tooltip-box');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -184,7 +185,7 @@ function speedColor(t) {
 
 /** Line weight – thicker for faster segments */
 function speedWeight(t) {
-  return 2 + t * 5;
+  return 10;
 }
 
 // ── Render GeoJSON ────────────────────────────────────────────────────────────
@@ -192,6 +193,8 @@ function renderGeoJSON(geojson, filename) {
   // Clear previous layers
   trackLayers.forEach(l => map.removeLayer(l));
   trackLayers = [];
+  wpLayers.forEach(l => map.removeLayer(l));
+  wpLayers = [];
   hideError();
 
   const features = geojson.features || [];
@@ -216,9 +219,10 @@ function renderGeoJSON(geojson, filename) {
       if (coords.length < 2) return;
 
       // Per-line coordTimes
-      const allTimes = feature.properties && feature.properties.coordTimes;
-      const times = (geom.type === 'LineString' && Array.isArray(allTimes))
-        ? allTimes : null;
+      const allTimes   = feature.properties && feature.properties.coordTimes;
+      const times      = (geom.type === 'LineString' && Array.isArray(allTimes)) ? allTimes : null;
+      const allTargets = feature.properties && feature.properties.coordTargets;
+      const targets    = (geom.type === 'LineString' && Array.isArray(allTargets)) ? allTargets : null;
 
       // ── Deduplicate consecutive identical coordinates ─────────────────────
       // The GPS module updates at ~1 Hz but the app polls much faster, so the
@@ -226,14 +230,16 @@ function renderGeoJSON(geojson, filename) {
       // Computing speed over those tiny gaps gives nonsense values.
       // Fix: collapse runs of identical coords, keeping the FIRST timestamp of
       // each run. Speed is then distance / time-between-GPS-updates (~1 s).
-      const dcCoords = [coords[0]];
-      const dcTimes  = [times ? new Date(times[0]).getTime() : null];
+      const dcCoords   = [coords[0]];
+      const dcTimes    = [times   ? new Date(times[0]).getTime() : null];
+      const dcTargets  = [targets ? targets[0] : null];
 
       for (let i = 1; i < coords.length; i++) {
         const prev = dcCoords[dcCoords.length - 1];
         if (coords[i][0] !== prev[0] || coords[i][1] !== prev[1]) {
           dcCoords.push(coords[i]);
-          dcTimes.push(times && times[i] ? new Date(times[i]).getTime() : null);
+          dcTimes.push(times   && times[i]   ? new Date(times[i]).getTime() : null);
+          dcTargets.push(targets && targets[i] ? targets[i] : null);
         }
       }
 
@@ -304,6 +310,12 @@ function renderGeoJSON(geojson, filename) {
           tooltip.style.display = 'none';
         });
 
+        // Tag segment with its target waypoint key (if any)
+        const segTarget = dcTargets[i];
+        if (Array.isArray(segTarget) && segTarget.length >= 2) {
+          poly._wpKey = segTarget[0].toFixed(7) + ',' + segTarget[1].toFixed(7);
+        }
+
         poly.addTo(map);
         if (hasRealSpeed) poly._speedKmh = displaySpeed;
         trackLayers.push(poly);
@@ -317,6 +329,50 @@ function renderGeoJSON(geojson, filename) {
     return;
   }
 
+  // ── Draw target waypoint markers ──────────────────────────────────────────
+  // Collect unique [lon, lat] targets in order of first appearance
+  const seenTargets = [];
+  features.forEach(feature => {
+    const tgts = feature.properties && feature.properties.coordTargets;
+    if (!Array.isArray(tgts)) return;
+    tgts.forEach(t => {
+      if (!Array.isArray(t) || t.length < 2) return;
+      const key = t[0].toFixed(7) + ',' + t[1].toFixed(7);
+      if (!seenTargets.find(s => s.key === key)) {
+        seenTargets.push({ key, lon: t[0], lat: t[1] });
+      }
+    });
+  });
+
+  seenTargets.forEach((wp, idx) => {
+    const n = idx + 1;
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="
+        background:#c0392b;color:#fff;border-radius:50%;
+        width:28px;height:28px;display:flex;align-items:center;justify-content:center;
+        font-weight:700;font-size:13px;border:2px solid #fff;
+        box-shadow:0 2px 6px rgba(0,0,0,.3);font-family:Segoe UI,Arial,sans-serif">${n}</div>`,
+      iconSize: [28, 28],
+      iconAnchor: [14, 14]
+    });
+    const m = L.marker([wp.lat, wp.lon], { icon })
+      .bindTooltip(`Waypoint ${n}`, { permanent: false, direction: 'top' })
+      .addTo(map);
+
+    m.on('mouseover', function() {
+      trackLayers.forEach(l => {
+        l.setStyle({ opacity: l._wpKey === wp.key ? 1 : 0.1 });
+      });
+    });
+    m.on('mouseout', function() {
+      trackLayers.forEach(l => l.setStyle({ opacity: 0.9 }));
+    });
+
+    wpLayers.push(m);
+    allBounds.push([wp.lat, wp.lon]);
+  });
+
   // Fit map to track
   if (allBounds.length > 0) {
     map.fitBounds(L.latLngBounds(allBounds), { padding: [40, 40] });
@@ -327,13 +383,20 @@ function renderGeoJSON(geojson, filename) {
   const allSpeeds = trackLayers
     .map(l => l._speedKmh)
     .filter(v => v !== undefined && v !== null);
-  const maxKmh = allSpeeds.length ? Math.max(...allSpeeds) : null;
+  const maxKmh    = allSpeeds.length ? Math.max(...allSpeeds) : null;
   const medianKmh = allSpeeds.length ? [...allSpeeds].sort((a, b) => a - b)[Math.floor(allSpeeds.length / 2)] : null;
+  const avgKmh    = allSpeeds.length ? allSpeeds.reduce((a, b) => a + b, 0) / allSpeeds.length : null;
 
   const info = document.getElementById('track-info');
   let speedSummary = '';
   if (maxKmh !== null) {
-    speedSummary = `&nbsp;|&nbsp; max <b>${maxKmh.toFixed(1)} km/h</b>&nbsp; median <b>${medianKmh.toFixed(1)} km/h</b>`;
+    speedSummary = `&nbsp;|&nbsp; max <b>${maxKmh.toFixed(1)}</b> &nbsp;avg <b>${avgKmh.toFixed(1)}</b> &nbsp;median <b>${medianKmh.toFixed(1)} km/h</b>`;
+    const legendMax = document.getElementById('legend-max');
+    if (legendMax) {
+      legendMax.textContent = maxKmh > 10
+        ? '\u226510 km/h'
+        : maxKmh.toFixed(1) + ' km/h';
+    }
   }
   info.innerHTML =
     `<b>${filename}</b><br>` +
