@@ -928,16 +928,18 @@ function update() {
       document.getElementById("speed").textContent = d.spd_valid  ? d.spd.toFixed(1)  + " km/h" : "-";
 
       // Sync navigation display from server
-      if (d.nav_active && waypoints.length > 0) {
-        var serverIdx = d.nav_wp_index;
-        if (typeof serverIdx === "number" && serverIdx !== currentWPIndex && serverIdx < waypoints.length) {
-          currentWPIndex = serverIdx;
-          refreshMarkerIcons();
-        }
+      if (waypoints.length > 0) {
         lastTargetDist = d.nav_dist;
-        document.getElementById("target-dist").textContent =
-          d.nav_dist >= 1000 ? (d.nav_dist / 1000).toFixed(2) + " km" : d.nav_dist.toFixed(0) + " m";
-        document.getElementById("target-bear").textContent = bearingLabel(d.nav_bearing);
+        if (d.nav_active) {
+          var serverIdx = d.nav_wp_index;
+          if (typeof serverIdx === "number" && serverIdx !== currentWPIndex && serverIdx < waypoints.length) {
+            currentWPIndex = serverIdx;
+            refreshMarkerIcons();
+          }
+          document.getElementById("target-dist").textContent =
+            d.nav_dist >= 1000 ? (d.nav_dist / 1000).toFixed(2) + " km" : d.nav_dist.toFixed(0) + " m";
+          document.getElementById("target-bear").textContent = bearingLabel(d.nav_bearing);
+        }
         updateWPInfo();
       }
     })

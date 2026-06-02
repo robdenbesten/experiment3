@@ -335,7 +335,7 @@ void triggerWPConfirmFlash() {
 
 void handleWPConfirmFlashTimeout() {
   if (!wpConfirmFlashActive) return;
-  if (millis() - wpConfirmFlashAt < 50) return;  // 5 pulses × 50 ms = 500 ms total
+  if (millis() - wpConfirmFlashAt < 100) return;  // 5 pulses × 100 ms = 1000 ms total
 
   wpConfirmFlashAt = millis();
   wpConfirmFlashStep++;
