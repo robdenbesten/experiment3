@@ -111,6 +111,7 @@ NavWaypoint navWaypoints[MAX_NAV_WAYPOINTS];
 int  navWPCount        = 0;
 int  navWPIndex        = 0;
 bool navActive         = false;
+int secondsInsideZone  = 0; 
 double navDistM        = 0.0;
 double navTargetBear   = 0.0;
 int  navBurstRemaining = 0;
@@ -458,22 +459,35 @@ void updateNavState() {
   navDistM      = navHaversineM(lat, lon, navWaypoints[navWPIndex].lat, navWaypoints[navWPIndex].lon);
   navTargetBear = navCalcBearing(lat, lon, navWaypoints[navWPIndex].lat, navWaypoints[navWPIndex].lon);
 
-  // Auto-advance when within 10 m of current waypoint
-  if (navDistM <= 10.0 && navWPIndex < navWPCount - 1) {
-    triggerWPConfirmFlash();
-    navWPIndex++;
-    navBurstRemaining = 0;
-    navFirstFlashPending = true;
-    lastNavLedAt = 0;
-    navDistM      = navHaversineM(lat, lon, navWaypoints[navWPIndex].lat, navWaypoints[navWPIndex].lon);
-    navTargetBear = navCalcBearing(lat, lon, navWaypoints[navWPIndex].lat, navWaypoints[navWPIndex].lon);
-    Serial.printf("Nav: advanced to WP %d, dist=%.1f\n", navWPIndex, navDistM);
-  } else if (navDistM <= 10.0 && navWPIndex == navWPCount - 1) {
-    // Last waypoint reached — stop navigation
-    triggerWPConfirmFlash();
-    navActive = false;
-    navBurstRemaining = 0;
-    Serial.println("Nav: last waypoint reached, navigation stopped");
+  // 1. Check if we are inside 5m
+  if (navDistM <= 5.0) {
+    secondsInsideZone++; // Add 1 second
+  } else {
+    secondsInsideZone = 0; // Reset completely if we step out
+  }
+
+  // 2. If we've been inside for at least 2 seconds, trigger the waypoint change
+  if (secondsInsideZone >= 2) {
+    secondsInsideZone = 0; // Reset counter for the next waypoint
+
+    if (navWPIndex < navWPCount - 1) {
+      triggerWPConfirmFlash();
+      navWPIndex++;
+      navBurstRemaining = 0;
+      navFirstFlashPending = true;
+      lastNavLedAt = 0;
+      
+      // Recalculate positions immediately for the new waypoint
+      navDistM      = navHaversineM(lat, lon, navWaypoints[navWPIndex].lat, navWaypoints[navWPIndex].lon);
+      navTargetBear = navCalcBearing(lat, lon, navWaypoints[navWPIndex].lat, navWaypoints[navWPIndex].lon);
+      Serial.printf("Nav: advanced to WP %d, dist=%.1f\n", navWPIndex, navDistM);
+    } else {
+      // Last waypoint reached
+      triggerWPConfirmFlash();
+      navActive = false;
+      navBurstRemaining = 0;
+      Serial.println("Nav: last waypoint reached, navigation stopped");
+    }
   }
 }
 
@@ -487,11 +501,13 @@ void updateNavLeds() {
     interval = 1000;
   } else if (navDistM > 50.0) {
     interval = 5000;
-  } else if (navDistM <= 10.0) {
-    interval = 1000;
+  } else if (navDistM <= 5.0) {
+    interval = 500; // <─── Changed from 1000 to 500 ms when within 5 meters
   } else {
-    // Linear: 5000 ms at 50 m -> 1000 ms at 10 m
-    interval = (unsigned long)(5000.0 - ((50.0 - navDistM) / 40.0) * 4000.0);
+    // Linear scale: 5000 ms at 50 m ──> 500 ms at 5 m
+    // Total distance span = 45.0 meters (50m - 5m)
+    // Total time span     = 4500.0 ms (5000ms - 500ms)
+    interval = (unsigned long)(5000.0 - ((50.0 - navDistM) / 45.0) * 4500.0);
   }
 
   unsigned long now = millis();
