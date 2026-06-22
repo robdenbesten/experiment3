@@ -290,6 +290,7 @@ uint8_t scaleToBrightness(float t) {
   return (uint8_t)(curved * 255.0f);
 }
 
+// normal
 void updateDirectionLedsMode1(float heading, float target) {
   int exclusiveIdx = -1;
   for (int i = 0; i < numLeds; i++) {
@@ -310,13 +311,6 @@ void updateDirectionLedsMode1(float heading, float target) {
     }
 
     setLedBrightnessByIndex(i, scaleToBrightness(scale));
-  }
-
-  // ─── FORCE 275 & 303 FOR THE -180 TO -90 RANGE ───
-  // Maps to 180° to 270° on a standard 0-360° circle
-  if (target >= 180.0f && target <= 270.0f) {
-    setLedBrightnessByIndex(0, 255); // Force 275 LED on fully
-    setLedBrightnessByIndex(1, 255); // Force 303 LED on fully
   }
 }
 
