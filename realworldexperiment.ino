@@ -258,13 +258,15 @@ float getMode1BlendRangeDeg(int idx) {
 float mode1ScaleForCircle(float circleAbsAngle, float target, int idx) {
   float signedDelta = shortestAngleDifference(circleAbsAngle, target);
 
-  // Keep left-most circle active in the same extra range used in Experiment 2.
-  if (idx == 0 && signedDelta >= -90.0f && signedDelta <= 0.0f) {
+  // --- LEFT HEMISPHERE OVERRIDE (-180 to -85 degrees) ---
+  // If the target is behind on the left, force BOTH LED 0 and LED 1 to 100%
+  if ((idx == 0 || idx == 1) && signedDelta >= -95.0f && signedDelta <= 0.0f) {
     return 1.0f;
   }
 
-  // Keep right-most circle active in the same extra range used in Experiment 2.
-  if (idx == 6 && signedDelta >= 0.0f && signedDelta <= 90.0f) {
+  // --- RIGHT HEMISPHERE OVERRIDE (+85 to +180 degrees) ---
+  // Keep the right-most LED catching everything up to +180 degrees
+  if (idx == 6 && signedDelta >= 0.0f && signedDelta <= 95.0f) {
     return 1.0f;
   }
 
