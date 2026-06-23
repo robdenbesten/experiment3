@@ -291,6 +291,7 @@ float mode1ScaleForCircle(float circleAbsAngle, float target, int idx) {
     return 0.0f;
   }
 
+ 
   return 1.0f - diff / blendRange;
 }
 
