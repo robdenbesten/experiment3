@@ -231,13 +231,26 @@ float shortestAngleDifference(float from, float to) {
   return delta;
 }
 
+// Tracks current brightness values for the override check
+uint8_t currentLedBrightnesses[7] = {0, 0, 0, 0, 0, 0, 0};
+
 void setLedBrightnessByIndex(int idx, uint8_t brightness) {
+  // 1. Store the incoming value for this LED
+  currentLedBrightnesses[idx] = brightness;
+
+  // 2. Run the hardware PWM write for the requested LED
   ledcWrite(ledPins[idx], brightness);
+
+  // 3. THE END OVERRIDE: If LED 0 is ON, force LED 1 to 100% (255)
+  if (currentLedBrightnesses[0] > 0) {
+    ledcWrite(ledPins[1], 255);
+  }
 }
 
 void turnOffDirectionLeds() {
   for (int i = 0; i < numLeds; i++) {
-    setLedBrightnessByIndex(i, 0);
+    currentLedBrightnesses[i] = 0; // Reset tracking
+    ledcWrite(ledPins[i], 0);      // Explicitly pull pin low
   }
 }
 
