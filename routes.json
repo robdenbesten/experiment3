@@ -9,6 +9,16 @@
     ]
   },
   {
+    "id": "Experiment3A",
+    "name": "Experiment3A",
+    "waypoints": [
+      { "lat": 52.107190, "lon": 5.087725 },
+      { "lat": 52.106988, "lon": 5.087610 },
+      { "lat": 52.106984, "lon": 5.086902 },
+      { "lat": 52.107291, "lon": 5.087444 }
+    ]
+  },
+  {
     "id": "Experiment3B",
     "name": "Experiment3B",
     "waypoints": [
@@ -24,4 +34,5 @@
       { "lat": 52.107291, "lon": 5.087444 }
     ]
   }
+  
 ]
