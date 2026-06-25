@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GeoViewer – GPS Track Speed Map</title>
+  <title>GeoViewer – Saturation Sync GPS Race Simulator</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -34,7 +34,7 @@
       letter-spacing: 0.03em;
     }
 
-    #file-label {
+    #file-label, #btn-playback {
       cursor: pointer;
       padding: 5px 14px;
       border-radius: 5px;
@@ -42,11 +42,20 @@
       color: #444;
       font-size: 0.82rem;
       border: 1px solid #c0392b;
-      transition: background 0.2s;
+      transition: all 0.2s;
       white-space: nowrap;
     }
     #file-label:hover { background: #c0392b; color: #fff; }
     #file-input { display: none; }
+
+    #btn-playback {
+      background: #27ae60;
+      border-color: #27ae60;
+      color: #fff;
+      font-weight: 600;
+      display: none;
+    }
+    #btn-playback:hover { background: #219653; }
 
     #track-info {
       margin-left: auto;
@@ -61,20 +70,44 @@
       width: 100%;
     }
 
-    /* Speed legend */
-    #legend {
+    .overlay-panel {
       position: absolute;
-      bottom: 30px;
-      right: 12px;
       z-index: 1000;
       background: rgba(255, 255, 255, 0.95);
       border: 1px solid #ddd;
       border-radius: 8px;
       padding: 10px 14px;
-      font-size: 0.78rem;
-      color: #444;
-      min-width: 130px;
       box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+    }
+
+    #race-stats {
+      top: 70px;
+      right: 12px;
+      min-width: 250px;
+      display: none;
+    }
+
+    #race-stats h4 {
+      font-size: 0.85rem;
+      color: #2c3e50;
+      margin-bottom: 6px;
+      border-bottom: 1px solid #eee;
+      padding-bottom: 4px;
+    }
+
+    .stat-row {
+      font-size: 0.78rem;
+      margin: 4px 0;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    #legend {
+      bottom: 30px;
+      right: 12px;
+      font-size: 0.75rem;
+      color: #444;
+      min-width: 260px;
     }
 
     #legend h4 {
@@ -83,19 +116,25 @@
       color: #c0392b;
     }
 
-    .legend-gradient {
+    .legend-colors {
+      display: grid;
+      grid-template-columns: repeat(10, 1fr);
       height: 14px;
       width: 100%;
       border-radius: 4px;
-      background: linear-gradient(to right, #d2d2d2, #cc4444, #cc0000);
+      overflow: hidden;
       margin-bottom: 4px;
+    }
+
+    .legend-bar {
+      height: 100%;
     }
 
     .legend-labels {
       display: flex;
       justify-content: space-between;
-      font-size: 0.72rem;
-      color: #888;
+      font-size: 0.68rem;
+      color: #666;
     }
 
     #tooltip-box {
@@ -130,21 +169,44 @@
 
 <header>
   <h1>GeoViewer</h1>
-  <label id="file-label" for="file-input">&#128194; Load .geojson</label>
-  <input type="file" id="file-input" accept=".geojson,.json" />
-  <div id="track-info">No file loaded</div>
+  <label id="file-label" for="file-input">&#128194; Load .geojson (Select 1 or 2 files)</label>
+  <input type="file" id="file-input" accept=".geojson,.json" multiple />
+  <button id="btn-playback">&#9654; Start Race (10x)</button>
+  <div id="track-info">No files loaded</div>
 </header>
 
 <div id="error-msg"></div>
 <div id="map"></div>
 
-<div id="legend">
-  <h4>Speed (km/h)</h4>
-  <div class="legend-gradient"></div>
-  <div class="legend-labels"><span>0 km/h</span><span id="legend-max">≥10 km/h</span></div>
+<div id="race-stats" class="overlay-panel">
+  <h4>Race Monitor (10x Speed)</h4>
+  <div class="stat-row"><span>Race Timer:</span><b id="race-clock">00:00</b></div>
+  
+  <div style="margin-top: 8px; font-weight: 600; font-size:0.75rem; color:#e74c3c;">Participant 1</div>
+  <div class="stat-row"><span>Status:</span><b id="p1-status">Ready</b></div>
+  <div class="stat-row"><span>Current Speed:</span><b id="p1-speed">-</b></div>
+  <div class="stat-row"><span>Distance Run:</span><b id="p1-dist">-</b></div>
+  
+  <div style="margin-top: 8px; font-weight: 600; font-size:0.75rem; color:#2980b9;">Participant 2</div>
+  <div class="stat-row"><span>Status:</span><b id="p2-status">Ready</b></div>
+  <div class="stat-row"><span>Current Speed:</span><b id="p2-speed">-</b></div>
+  <div class="stat-row"><span>Distance Run:</span><b id="p2-dist">-</b></div>
 </div>
 
-<div id="tooltip-box" id="tooltip-box"></div>
+<div id="legend" class="overlay-panel">
+  <h4>Waypoint Sequences & Speed Grading</h4>
+  <div class="legend-colors">
+    <div class="legend-bar" style="background: #00008b;"></div> <div class="legend-bar" style="background: #b03060;"></div> <div class="legend-bar" style="background: #ff0000;"></div> <div class="legend-bar" style="background: #ffd700;"></div> <div class="legend-bar" style="background: #00ff00;"></div> <div class="legend-bar" style="background: #00ffff;"></div> <div class="legend-bar" style="background: #ff00ff;"></div> <div class="legend-bar" style="background: #6495ed;"></div> <div class="legend-bar" style="background: #ffdab9;"></div> <div class="legend-bar" style="background: #006400;"></div> </div>
+  <div class="legend-labels">
+    <span>Start &rarr; W1 (Blue)</span>
+    <span>W9 &rarr; W10+ (Green)</span>
+  </div>
+  <div style="font-size: 10px; color: #666; margin-top: 6px; text-align: center;">
+    <i>Slower segments look greyish &bull; Faster segments are full on color</i>
+  </div>
+</div>
+
+<div id="tooltip-box"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
@@ -157,286 +219,419 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
   maxZoom: 20
 }).addTo(map);
 
-// ── State ─────────────────────────────────────────────────────────────────────
-let trackLayers = [];
-let wpLayers    = [];
+// ── State Management ──────────────────────────────────────────────────────────
+let participantsData = []; 
 const tooltip = document.getElementById('tooltip-box');
+const playbackBtn = document.getElementById('btn-playback');
+const raceStatsPanel = document.getElementById('race-stats');
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-/** Haversine distance in metres between two [lng, lat] points */
+let isAnimating = false;
+let maxRaceDurationMs = 0;
+let animationStartRealTime = null;
+let timeElapsedSimulatedBeforePause = 0;
+let animationId = null;
+
+const colorPalette = [
+  '#00008b', // darkblue (Start -> W1)
+  '#b03060', // maroon3  (W1 -> W2)
+  '#ff0000', // red       (W2 -> W3)
+  '#ffd700', // gold      (W3 -> W4)
+  '#00ff00', // lime      (W4 -> W5)
+  '#00ffff', // aqua      (W5 -> W6)
+  '#ff00ff', // fuchsia   (W6 -> W7)
+  '#6495ed', // cornflower(W7 -> W8)
+  '#ffdab9', // peachpuff (W8 -> W9)
+  '#006400'  // darkgreen (W9 -> W10+)
+];
+
 function haversine([lng1, lat1], [lng2, lat2]) {
   const R = 6371000;
   const toRad = d => d * Math.PI / 180;
   const dLat = toRad(lat2 - lat1);
   const dLng = toRad(lng2 - lng1);
-  const a = Math.sin(dLat / 2) ** 2 +
-            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-/** Map a normalised value [0,1] to a light-grey→red colour string */
-function speedColor(t) {
-  // Light grey (210,210,210) → red (220,50,50)
-  const r = Math.round(210 + t * (220 - 210));
-  const g = Math.round(210 - t * 160);
-  const b = Math.round(210 - t * 160);
+function hexToRgb(hex) {
+  const bigint = parseInt(hex.replace('#', ''), 16);
+  return [
+    (bigint >> 16) & 255,
+    (bigint >> 8) & 255,
+    bigint & 255
+  ];
+}
+
+function getSaturatedColor(baseHex, t) {
+  const [rBase, gBase, bBase] = hexToRgb(baseHex);
+  const rGrey = 210, gGrey = 210, bGrey = 210;
+
+  const r = Math.round(rGrey + t * (rBase - rGrey));
+  const g = Math.round(gGrey + t * (gBase - gGrey));
+  const b = Math.round(bGrey + t * (bBase - bGrey));
+  
   return `rgb(${r},${g},${b})`;
 }
 
-/** Line weight – thicker for faster segments */
-function speedWeight(t) {
-  return 10;
-}
-
-// ── Render GeoJSON ────────────────────────────────────────────────────────────
-function renderGeoJSON(geojson, filename) {
-  // Clear previous layers
-  trackLayers.forEach(l => map.removeLayer(l));
-  trackLayers = [];
-  wpLayers.forEach(l => map.removeLayer(l));
-  wpLayers = [];
+// ── Process GeoJSON Pipeline ─────────────────────────────────────────────────────
+async function handleFiles(files) {
+  stopPlayback();
+  
+  participantsData.forEach(p => {
+    p.segments.forEach(s => map.removeLayer(s.poly));
+    p.waypoints.forEach(w => map.removeLayer(w));
+    if (p.marker) map.removeLayer(p.marker);
+  });
+  participantsData = [];
   hideError();
 
-  const features = geojson.features || [];
+  const fileCount = Math.min(files.length, 2);
   let allBounds = [];
-  let totalDist = 0;
-  let segmentCount = 0;
 
-  features.forEach(feature => {
-    const geom = feature.geometry;
-    if (!geom) return;
-
-    let lines = [];
-    if (geom.type === 'LineString') {
-      lines = [geom.coordinates];
-    } else if (geom.type === 'MultiLineString') {
-      lines = geom.coordinates;
-    } else {
-      return; // skip non-line features
+  for (let idx = 0; idx < fileCount; idx++) {
+    const file = files[idx];
+    try {
+      const jsonText = await file.text();
+      const geojson = JSON.parse(jsonText);
+      processParticipant(geojson, file.name, idx, allBounds);
+    } catch(err) {
+      showError(`Error reading file ${file.name}: ${err.message}`);
     }
-
-    lines.forEach((coords, lineIdx) => {
-      if (coords.length < 2) return;
-
-      // Per-line coordTimes
-      const allTimes   = feature.properties && feature.properties.coordTimes;
-      const times      = (geom.type === 'LineString' && Array.isArray(allTimes)) ? allTimes : null;
-      const allTargets = feature.properties && feature.properties.coordTargets;
-      const targets    = (geom.type === 'LineString' && Array.isArray(allTargets)) ? allTargets : null;
-
-      // ── Deduplicate consecutive identical coordinates ─────────────────────
-      // The GPS module updates at ~1 Hz but the app polls much faster, so the
-      // same coordinate appears dozens of times in a row with millisecond gaps.
-      // Computing speed over those tiny gaps gives nonsense values.
-      // Fix: collapse runs of identical coords, keeping the FIRST timestamp of
-      // each run. Speed is then distance / time-between-GPS-updates (~1 s).
-      const dcCoords   = [coords[0]];
-      const dcTimes    = [times   ? new Date(times[0]).getTime() : null];
-      const dcTargets  = [targets ? targets[0] : null];
-
-      for (let i = 1; i < coords.length; i++) {
-        const prev = dcCoords[dcCoords.length - 1];
-        if (coords[i][0] !== prev[0] || coords[i][1] !== prev[1]) {
-          dcCoords.push(coords[i]);
-          dcTimes.push(times   && times[i]   ? new Date(times[i]).getTime() : null);
-          dcTargets.push(targets && targets[i] ? targets[i] : null);
-        }
-      }
-
-      // Accumulate total distance from deduplicated coords
-      for (let i = 1; i < dcCoords.length; i++) {
-        totalDist += haversine(dcCoords[i - 1], dcCoords[i]);
-      }
-
-      // ── Compute speed for each deduplicated segment ───────────────────────
-      const speeds = [];
-      let hasRealSpeed = false;
-
-      for (let i = 1; i < dcCoords.length; i++) {
-        const d = haversine(dcCoords[i - 1], dcCoords[i]);
-        const t0 = dcTimes[i - 1], t1 = dcTimes[i];
-        if (t0 !== null && t1 !== null) {
-          const dtMs = t1 - t0;
-          speeds.push(dtMs > 0 ? (d / dtMs) * 3600 : 0); // km/h
-          hasRealSpeed = true;
-        } else {
-          speeds.push(d); // fallback: raw metres
-        }
-      }
-
-      segmentCount += speeds.length;
-
-      const SPEED_CAP = 10; // km/h — clamp outliers so they don't wash out colour scale
-      const cappedSpeeds = hasRealSpeed ? speeds.map(s => Math.min(s, SPEED_CAP)) : speeds;
-      const maxSpeed = Math.max(...cappedSpeeds, 0.0001);
-      const minSpeed = Math.min(...cappedSpeeds);
-      const range    = maxSpeed - minSpeed || 0.0001;
-
-      // ── Draw one polyline per deduplicated segment ────────────────────────
-      for (let i = 0; i < speeds.length; i++) {
-        const t = (cappedSpeeds[i] - minSpeed) / range;
-        const segCoords = [
-          [dcCoords[i][1],     dcCoords[i][0]],
-          [dcCoords[i + 1][1], dcCoords[i + 1][0]]
-        ];
-        const displaySpeed = speeds[i];
-
-        const poly = L.polyline(segCoords, {
-          color: speedColor(t),
-          weight: speedWeight(t),
-          opacity: 0.9,
-          lineCap: 'round'
-        });
-
-        poly.on('mouseover', function(e) {
-          tooltip.style.display = 'block';
-          const speedLine = hasRealSpeed
-            ? `Speed: <b>${displaySpeed.toFixed(1)} km/h</b>`
-            : `Displacement: <b>${displaySpeed.toFixed(4)} m</b> <span style="color:#888">(no timestamps)</span>`;
-          tooltip.innerHTML =
-            `<strong>Segment ${i + 1}</strong><br>` + speedLine;
-        });
-
-        poly.on('mousemove', function(e) {
-          const mapDiv = document.getElementById('map');
-          const rect = mapDiv.getBoundingClientRect();
-          const x = e.originalEvent.clientX - rect.left + 12;
-          const y = e.originalEvent.clientY - rect.top - 10;
-          tooltip.style.left = x + 'px';
-          tooltip.style.top  = y + 'px';
-        });
-
-        poly.on('mouseout', function() {
-          tooltip.style.display = 'none';
-        });
-
-        // Tag segment with its target waypoint key (if any)
-        const segTarget = dcTargets[i];
-        if (Array.isArray(segTarget) && segTarget.length >= 2) {
-          poly._wpKey = segTarget[0].toFixed(7) + ',' + segTarget[1].toFixed(7);
-        }
-
-        poly.addTo(map);
-        if (hasRealSpeed) poly._speedKmh = displaySpeed;
-        trackLayers.push(poly);
-        allBounds.push(...segCoords);
-      }
-    });
-  });
-
-  if (trackLayers.length === 0) {
-    showError('No LineString / MultiLineString features found in this GeoJSON file.');
-    return;
   }
 
-  // ── Draw target waypoint markers ──────────────────────────────────────────
-  // Collect unique [lon, lat] targets in order of first appearance
-  const seenTargets = [];
+  if (participantsData.length === 0) return;
+
+  if (allBounds.length > 0) {
+    map.fitBounds(L.latLngBounds(allBounds), { padding: [40, 40] });
+  }
+
+  maxRaceDurationMs = 0;
+  participantsData.forEach(p => {
+    const duration = p.maxTime - p.minTime;
+    if (duration > maxRaceDurationMs) {
+      maxRaceDurationMs = duration;
+    }
+  });
+
+  if (maxRaceDurationMs > 0) {
+    timeElapsedSimulatedBeforePause = 0;
+    playbackBtn.style.display = 'inline-block';
+    raceStatsPanel.style.display = 'block';
+    resetStatsDashboard();
+  } else {
+    playbackBtn.style.display = 'none';
+    raceStatsPanel.style.display = 'none';
+    showError("Sync Error: Missing valid 'coordTimes' arrays required to coordinate playback steps.");
+  }
+
+  document.getElementById('track-info').innerHTML = participantsData.map((p, i) => 
+    `<b>P${i+1}:</b> ${p.name} (${(p.totalDist/1000).toFixed(2)} km)`
+  ).join('<br>');
+}
+
+function processParticipant(geojson, filename, idx, allBounds) {
+  const features = geojson.features || [];
+  
+  let uniqueWaypoints = [];
+  let seenWpKeys = [];
   features.forEach(feature => {
     const tgts = feature.properties && feature.properties.coordTargets;
     if (!Array.isArray(tgts)) return;
     tgts.forEach(t => {
       if (!Array.isArray(t) || t.length < 2) return;
       const key = t[0].toFixed(7) + ',' + t[1].toFixed(7);
-      if (!seenTargets.find(s => s.key === key)) {
-        seenTargets.push({ key, lon: t[0], lat: t[1] });
+      if (!seenWpKeys.includes(key)) {
+        seenWpKeys.push(key);
+        uniqueWaypoints.push({ key, lon: t[0], lat: t[1] });
       }
     });
   });
 
-  seenTargets.forEach((wp, idx) => {
-    const n = idx + 1;
-    const icon = L.divIcon({
-      className: '',
-      html: `<div style="
-        background:#c0392b;color:#fff;border-radius:50%;
-        width:28px;height:28px;display:flex;align-items:center;justify-content:center;
-        font-weight:700;font-size:13px;border:2px solid #fff;
-        box-shadow:0 2px 6px rgba(0,0,0,.3);font-family:Segoe UI,Arial,sans-serif">${n}</div>`,
-      iconSize: [28, 28],
-      iconAnchor: [14, 14]
-    });
-    const m = L.marker([wp.lat, wp.lon], { icon })
-      .bindTooltip(`Waypoint ${n}`, { permanent: false, direction: 'top' })
-      .addTo(map);
+  let segments = [];
+  let totalDist = 0;
+  let minTime = Infinity;
+  let maxTime = -Infinity;
 
-    m.on('mouseover', function() {
-      trackLayers.forEach(l => {
-        l.setStyle({ opacity: l._wpKey === wp.key ? 1 : 0.1 });
-      });
-    });
-    m.on('mouseout', function() {
-      trackLayers.forEach(l => l.setStyle({ opacity: 0.9 }));
-    });
+  features.forEach(feature => {
+    const geom = feature.geometry;
+    if (!geom || (geom.type !== 'LineString' && geom.type !== 'MultiLineString')) return;
 
-    wpLayers.push(m);
-    allBounds.push([wp.lat, wp.lon]);
+    let lines = geom.type === 'LineString' ? [geom.coordinates] : geom.coordinates;
+
+    lines.forEach(coords => {
+      if (coords.length < 2) return;
+
+      const allTimes = feature.properties && feature.properties.coordTimes;
+      const times = Array.isArray(allTimes) ? allTimes : null;
+      const allTargets = feature.properties && feature.properties.coordTargets;
+      const targets = Array.isArray(allTargets) ? allTargets : null;
+
+      const dcCoords = [coords[0]];
+      const dcTimes = [times ? new Date(times[0]).getTime() : null];
+      const dcTargets = [targets ? targets[0] : null];
+
+      for (let i = 1; i < coords.length; i++) {
+        const prev = dcCoords[dcCoords.length - 1];
+        if (coords[i][0] !== prev[0] || coords[i][1] !== prev[1]) {
+          dcCoords.push(coords[i]);
+          dcTimes.push(times && times[i] ? new Date(times[i]).getTime() : null);
+          dcTargets.push(targets && targets[i] ? targets[i] : null);
+        }
+      }
+
+      let currentWaypointIdx = 0;
+
+      for (let i = 0; i < dcCoords.length - 1; i++) {
+        const t0 = dcTimes[i];
+        const t1 = dcTimes[i + 1];
+        if (t0 === null || t1 === null) continue;
+
+        if (t0 < minTime) minTime = t0;
+        if (t1 > maxTime) maxTime = t1;
+
+        const d = haversine(dcCoords[i], dcCoords[i + 1]);
+        totalDist += d;
+        const dtMs = t1 - t0;
+        const speed = dtMs > 0 ? (d / dtMs) * 3600 : 0;
+
+        const segCoords = [[dcCoords[i][1], dcCoords[i][0]], [dcCoords[i + 1][1], dcCoords[i + 1][0]]];
+        allBounds.push(...segCoords);
+
+        const segTarget = dcTargets[i];
+        if (Array.isArray(segTarget) && segTarget.length >= 2) {
+          const targetKey = segTarget[0].toFixed(7) + ',' + segTarget[1].toFixed(7);
+          const foundIdx = uniqueWaypoints.findIndex(w => w.key === targetKey);
+          if (foundIdx !== -1) {
+            currentWaypointIdx = foundIdx; // directly align with index! No +1 offset.
+          }
+        }
+
+        const assignedBaseHex = colorPalette[currentWaypointIdx % colorPalette.length];
+        
+        const SPEED_CAP = 10;
+        const normalizedSpeedFactor = Math.min(speed, SPEED_CAP) / SPEED_CAP;
+
+        const poly = L.polyline(segCoords, {
+          color: getSaturatedColor(assignedBaseHex, normalizedSpeedFactor),
+          weight: 8,
+          opacity: 0.9,
+          lineCap: 'round'
+        });
+
+        poly.on('mouseover', function(e) {
+          if (isAnimating) return;
+          tooltip.style.display = 'block';
+          const targetText = currentWaypointIdx === 0 ? "Start &rarr; Waypoint 1" : `Waypoint ${currentWaypointIdx} &rarr; ${currentWaypointIdx + 1}`;
+          tooltip.innerHTML = `<strong>Participant ${idx + 1}</strong><br>Leg: ${targetText}<br>Speed: <b>${speed.toFixed(1)} km/h</b>`;
+        });
+        poly.on('mousemove', e => {
+          const rect = document.getElementById('map').getBoundingClientRect();
+          tooltip.style.left = (e.originalEvent.clientX - rect.left + 12) + 'px';
+          tooltip.style.top = (e.originalEvent.clientY - rect.top - 10) + 'px';
+        });
+        poly.on('mouseout', () => tooltip.style.display = 'none');
+
+        poly.addTo(map);
+
+        segments.push({ 
+          poly, 
+          t0, 
+          t1, 
+          speed, 
+          distContribution: d, 
+          targetCoord: segCoords[1],
+          legIndex: currentWaypointIdx 
+        });
+      }
+    });
   });
 
-  // Fit map to track
-  if (allBounds.length > 0) {
-    map.fitBounds(L.latLngBounds(allBounds), { padding: [40, 40] });
-  }
+  let waypoints = [];
+  uniqueWaypoints.forEach((wp, localIdx) => {
+    const color = idx === 0 ? '#c0392b' : '#2980b9';
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="background:${color};color:#fff;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:10px;border:1px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);">${localIdx + 1}</div>`,
+      iconSize: [20, 20],
+      iconAnchor: [10, 10]
+    });
+    
+    const m = L.marker([wp.lat, wp.lon], { icon }).addTo(map);
+    
+    m.on('mouseover', function() {
+      // Hovering Waypoint 3 (localIdx = 2) perfectly highlights legIndex 2 (Waypoint 2 -> Waypoint 3)
+      const targetLegIndex = localIdx; 
+      
+      participantsData.forEach(p => {
+        p.segments.forEach(seg => {
+          if (seg.legIndex === targetLegIndex) {
+            seg.poly.setStyle({ opacity: 0.9 });
+          } else {
+            seg.poly.setStyle({ opacity: 0.05 }); 
+          }
+        });
+      });
+    });
 
-  // Update info bar
-  // Collect all real km/h speeds across all drawn segments for the summary
-  const allSpeeds = trackLayers
-    .map(l => l._speedKmh)
-    .filter(v => v !== undefined && v !== null);
-  const maxKmh    = allSpeeds.length ? Math.max(...allSpeeds) : null;
-  const medianKmh = allSpeeds.length ? [...allSpeeds].sort((a, b) => a - b)[Math.floor(allSpeeds.length / 2)] : null;
-  const avgKmh    = allSpeeds.length ? allSpeeds.reduce((a, b) => a + b, 0) / allSpeeds.length : null;
+    m.on('mouseout', function() {
+      participantsData.forEach(p => {
+        p.segments.forEach(seg => {
+          seg.poly.setStyle({ opacity: 0.9 });
+        });
+      });
+    });
 
-  const info = document.getElementById('track-info');
-  let speedSummary = '';
-  if (maxKmh !== null) {
-    speedSummary = `&nbsp;|&nbsp; max <b>${maxKmh.toFixed(1)}</b> &nbsp;avg <b>${avgKmh.toFixed(1)}</b> &nbsp;median <b>${medianKmh.toFixed(1)} km/h</b>`;
-    const legendMax = document.getElementById('legend-max');
-    if (legendMax) {
-      legendMax.textContent = maxKmh > 10
-        ? '\u226510 km/h'
-        : maxKmh.toFixed(1) + ' km/h';
-    }
-  }
-  info.innerHTML =
-    `<b>${filename}</b><br>` +
-    `${segmentCount} segments &nbsp;|&nbsp; ${(totalDist / 1000).toFixed(3)} km total${speedSummary}`;
+    waypoints.push(m);
+  });
+
+  const markerColor = idx === 0 ? '#e74c3c' : '#3498db';
+  const leadingMarker = L.circleMarker([0, 0], {
+    radius: 8,
+    fillColor: markerColor,
+    color: '#fff',
+    weight: 2.5,
+    fillOpacity: 1
+  });
+
+  participantsData.push({
+    name: filename,
+    segments,
+    waypoints,
+    totalDist,
+    minTime,
+    maxTime,
+    marker: leadingMarker
+  });
 }
 
-// ── File picker ───────────────────────────────────────────────────────────────
-document.getElementById('file-input').addEventListener('change', function(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = function(evt) {
-    try {
-      const geojson = JSON.parse(evt.target.result);
-      renderGeoJSON(geojson, file.name);
-    } catch (err) {
-      showError('Failed to parse GeoJSON: ' + err.message);
+// ── Chronological Master Timeline Engine (Relative Sync) ───────────────────────
+function startPlayback() {
+  isAnimating = true;
+  playbackBtn.innerHTML = '&#9208; Pause';
+
+  if (timeElapsedSimulatedBeforePause === 0 || timeElapsedSimulatedBeforePause >= maxRaceDurationMs) {
+    timeElapsedSimulatedBeforePause = 0;
+    participantsData.forEach(p => {
+      p.segments.forEach(s => map.removeLayer(s.poly));
+      if (p.marker) map.removeLayer(p.marker);
+    });
+  }
+
+  animationStartRealTime = performance.now();
+  animationId = requestAnimationFrame(syncRaceTimelineLoop);
+}
+
+function syncRaceTimelineLoop(now) {
+  if (!isAnimating) return;
+
+  const SPEED_MULTIPLIER = 10;
+  const realTimePassedSinceStart = now - animationStartRealTime;
+  const currentSimulatedTimeElapsed = timeElapsedSimulatedBeforePause + (realTimePassedSinceStart * SPEED_MULTIPLIER);
+
+  const currentTotalSeconds = Math.floor(currentSimulatedTimeElapsed / 1000);
+  const minutesStr = String(Math.floor(currentTotalSeconds / 60)).padStart(2, '0');
+  const secondsStr = String(currentTotalSeconds % 60).padStart(2, '0');
+  document.getElementById('race-clock').innerText = `${minutesStr}:${secondsStr}`;
+
+  let activeRacers = 0;
+
+  participantsData.forEach((p, idx) => {
+    let runningDistanceSum = 0;
+    let latestActiveSpeed = 0;
+    let headCoordinate = null;
+    
+    const participantTargetTime = p.minTime + currentSimulatedTimeElapsed;
+
+    p.segments.forEach(seg => {
+      if (seg.t0 <= participantTargetTime) {
+        if (!map.hasLayer(seg.poly)) {
+          seg.poly.addTo(map);
+        }
+        runningDistanceSum += seg.distContribution;
+        latestActiveSpeed = seg.speed;
+        headCoordinate = seg.targetCoord;
+      } else {
+        if (map.hasLayer(seg.poly)) {
+          map.removeLayer(seg.poly);
+        }
+      }
+    });
+
+    const statusField = document.getElementById(`p${idx+1}-status`);
+    const speedField = document.getElementById(`p${idx+1}-speed`);
+    const distField = document.getElementById(`p${idx+1}-dist`);
+
+    if (participantTargetTime <= p.maxTime) {
+      statusField.innerText = "Racing";
+      speedField.innerText = `${latestActiveSpeed.toFixed(1)} km/h`;
+      distField.innerText = `${(runningDistanceSum / 1000).toFixed(2)} km`;
+      
+      if (headCoordinate) {
+        p.marker.setLatLng(headCoordinate);
+        if (!map.hasLayer(p.marker)) p.marker.addTo(map);
+      }
+      activeRacers++;
+    } else {
+      statusField.innerText = "Finished";
+      speedField.innerText = "0.0 km/h";
+      distField.innerText = `${(p.totalDist / 1000).toFixed(2)} km`;
+      
+      if (p.segments.length > 0) {
+        const lastSeg = p.segments[p.segments.length - 1];
+        p.marker.setLatLng(lastSeg.targetCoord);
+        if (!map.hasLayer(p.marker)) p.marker.addTo(map);
+      }
     }
-  };
-  reader.readAsText(file);
+  });
+
+  if (currentSimulatedTimeElapsed < maxRaceDurationMs && activeRacers > 0) {
+    animationId = requestAnimationFrame(syncRaceTimelineLoop);
+  } else {
+    stopPlayback();
+  }
+}
+
+function pausePlayback() {
+  isAnimating = false;
+  playbackBtn.innerHTML = '&#9654; Resume Race';
+  cancelAnimationFrame(animationId);
+  
+  const realTimePassedSinceStart = performance.now() - animationStartRealTime;
+  timeElapsedSimulatedBeforePause += (realTimePassedSinceStart * 10);
+}
+
+function stopPlayback() {
+  isAnimating = false;
+  playbackBtn.innerHTML = '&#9654; Start Race (10x)';
+  cancelAnimationFrame(animationId);
+  timeElapsedSimulatedBeforePause = 0;
+  
+  participantsData.forEach(p => {
+    p.segments.forEach(s => { if (!map.hasLayer(s.poly)) s.poly.addTo(map); });
+    if (p.marker && map.hasLayer(p.marker)) map.removeLayer(p.marker);
+  });
+}
+
+function resetStatsDashboard() {
+  document.getElementById('race-clock').innerText = "00:00";
+  for (let i = 1; i <= 2; i++) {
+    const statusField = document.getElementById(`p${i}-status`);
+    const speedField = document.getElementById(`p${i}-speed`);
+    const distField = document.getElementById(`p${i}-dist`);
+    if (statusField) statusField.innerText = "Ready";
+    if (speedField) speedField.innerText = "-";
+    if (distField) distField.innerText = "-";
+  }
+}
+
+// ── Event Hookups ─────────────────────────────────────────────────────────────
+playbackBtn.addEventListener('click', () => {
+  if (isAnimating) pausePlayback(); else startPlayback();
 });
 
-// ── Auto-load via fetch (works when served over HTTP) ────────────────────────
-(async function autoLoad() {
-  const candidates = [
-    'gps-track-2026-06-01_14-52-53-185.geojson'
-  ];
-
-  for (const name of candidates) {
-    try {
-      const res = await fetch(name);
-      if (!res.ok) continue;
-      const geojson = await res.json();
-      renderGeoJSON(geojson, name);
-      return;
-    } catch (_) { /* not served over HTTP, fall through */ }
-  }
-})();
-
-// ── Error helpers ─────────────────────────────────────────────────────────────
+document.getElementById('file-input').addEventListener('change', e => {
+  if (e.target.files.length > 0) handleFiles(e.target.files);
+});
 function showError(msg) {
   const el = document.getElementById('error-msg');
   el.textContent = msg;
